@@ -1,6 +1,6 @@
 # YOLO 2회차 통합 실습 — 물류센터 실시간 모니터링 화면 만들기
 
-노트북: [`yolo_day2_monitor_lab_v1.1.ipynb`](../yolo_day2_monitor_lab_v1.1.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_monitor_lab_v1.1.ipynb)
+노트북: [`04_yolo_day2_monitor_lab_v1.1.ipynb`](../04_yolo_day2_monitor_lab_v1.1.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/04_yolo_day2_monitor_lab_v1.1.ipynb)
 
 | 항목 | 내용 |
 |---|---|

@@ -1,6 +1,6 @@
 # YOLO 2회차 추가 실습 — 위험구역 침입 감시 시스템
 
-노트북: [`yolo_day2_zone_lab_v1.1.ipynb`](../yolo_day2_zone_lab_v1.1.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_zone_lab_v1.1.ipynb)
+노트북: [`02_yolo_day2_zone_lab_v1.1.ipynb`](../02_yolo_day2_zone_lab_v1.1.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/02_yolo_day2_zone_lab_v1.1.ipynb)
 
 | 항목 | 내용 |
 |---|---|

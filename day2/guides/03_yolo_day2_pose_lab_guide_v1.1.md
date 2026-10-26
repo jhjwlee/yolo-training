@@ -1,6 +1,6 @@
 # YOLO 2회차 실습 B — 상자 들기 동작 분석과 위험 자세 리포트
 
-노트북: [`yolo_day2_pose_lab_v1.2.ipynb`](../yolo_day2_pose_lab_v1.2.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_pose_lab_v1.2.ipynb)
+노트북: [`03_yolo_day2_pose_lab_v1.2.ipynb`](../03_yolo_day2_pose_lab_v1.2.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/03_yolo_day2_pose_lab_v1.2.ipynb)
 
 | 항목 | 내용 |
 |---|---|

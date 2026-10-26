@@ -8,7 +8,7 @@ _주제를 골라 개인 또는 2인 1조로, Google Colab에서 데이터 확�
 |---|---|
 | 진행 방식 | 개인 또는 2인 1조. 주제 8개 중 하나를 고름 (같은 주제를 여러 팀이 골라도 됨) |
 | 기간 | 2회차 후반에 시작 → 3회차에 이어서 완성 |
-| 도구 | Google Colab (T4 GPU), Google Drive, 시작 노트북 `yolo_workshop_starter_v1.1.ipynb` |
+| 도구 | Google Colab (T4 GPU), Google Drive, 시작 노트북 `02_yolo_workshop_starter_v1.1.ipynb` |
 | 멘토링 | 체크포인트(CP1~CP4)마다 멘토가 팀을 돌며 진행 상황을 함께 점검 |
 | 최종 결과물 | `project_report.md`, `report.png`, 최종 모델 `*_best.pt`, 실험 기록 `experiments.csv` |
 
@@ -167,7 +167,7 @@ _주제를 골라 개인 또는 2인 1조로, Google Colab에서 데이터 확�
 
 ## 4. 시작 노트북 사용법
 
-`yolo_workshop_starter_v1.1.ipynb`를 Drive에 복사해 Colab으로 엽니다. `✏️` 표시가 있는 셀만 우리 팀 내용으로 고치고, 나머지는 위에서부터 순서대로 실행합니다.
+`02_yolo_workshop_starter_v1.1.ipynb`를 Drive에 복사해 Colab으로 엽니다. `✏️` 표시가 있는 셀만 우리 팀 내용으로 고치고, 나머지는 위에서부터 순서대로 실행합니다.
 
 | 단계 | 고칠 값 (✏️) | 결과물 |
 |---|---|---|

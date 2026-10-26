@@ -1,6 +1,6 @@
 # YOLO 2회차 실습 A — 컨베이어 상자 '크기별' 자동 집계
 
-노트북: [`yolo_day2_box_lab_v1.2.ipynb`](../yolo_day2_box_lab_v1.2.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_box_lab_v1.2.ipynb)
+노트북: [`01_yolo_day2_box_lab_v1.2.ipynb`](../01_yolo_day2_box_lab_v1.2.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/01_yolo_day2_box_lab_v1.2.ipynb)
 
 | 항목 | 내용 |
 |---|---|

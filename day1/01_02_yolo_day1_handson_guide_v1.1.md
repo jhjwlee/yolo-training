@@ -11,10 +11,10 @@ KDT 심화 · YOLO 기반 부트캠프 · 특강 1회차 · Google Colab 핸즈�
 
 | **실습** | **현장 사례**                 | **YOLO가 하는 일** | **노트북**                        | **결과물**                            |
 |----------|-------------------------------|--------------------|-----------------------------------|---------------------------------------|
-| 1        | 건설현장 안전장비 미착용 감지 | 탐지 + 판정 규칙   | yolo_day1_ppe_lab_v1.1 (1~8장)    | portfolio_ppe.zip                     |
-| 2        | 물류센터 박스 카운팅          | 분할 + 추적        | yolo_day1_case_demos_v1.1 (0·2장) | package_counts.csv, line_counting.mp4 |
-| 3        | 운동 자세 카운터와 낙상 감지  | 포즈               | yolo_day1_case_demos_v1.1 (3장)   | pushup_counter.mp4, fall_rule_log.csv |
-| 4        | 주차장 빈자리와 매장 대기열   | 탐지 + 추적 + 영역 | yolo_day1_case_demos_v1.1 (4장)   | parking.mp4, roi_summary.csv          |
+| 1        | 건설현장 안전장비 미착용 감지 | 탐지 + 판정 규칙   | 01_yolo_day1_ppe_lab_v1.1 (1~8장)    | portfolio_ppe.zip                     |
+| 2        | 물류센터 박스 카운팅          | 분할 + 추적        | 02_yolo_day1_case_demos_v1.1 (0·2장) | package_counts.csv, line_counting.mp4 |
+| 3        | 운동 자세 카운터와 낙상 감지  | 포즈               | 02_yolo_day1_case_demos_v1.1 (3장)   | pushup_counter.mp4, fall_rule_log.csv |
+| 4        | 주차장 빈자리와 매장 대기열   | 탐지 + 추적 + 영역 | 02_yolo_day1_case_demos_v1.1 (4장)   | parking.mp4, roi_summary.csv          |
 
 ## 오늘의 한 문장
 
@@ -37,7 +37,7 @@ KDT 심화 · YOLO 기반 부트캠프 · 특강 1회차 · Google Colab 핸즈�
 
 - Google 계정과 Chrome 브라우저
 
-- 노트북 파일 두 개: yolo_day1_ppe_lab_v1.1.ipynb, yolo_day1_case_demos_v1.1.ipynb
+- 노트북 파일 두 개: 01_yolo_day1_ppe_lab_v1.1.ipynb, 02_yolo_day1_case_demos_v1.1.ipynb
 
 - 데이터와 예제 영상은 노트북이 실행 중에 자동으로 내려받습니다. 따로 준비할 것은 없습니다.
 
@@ -45,9 +45,9 @@ KDT 심화 · YOLO 기반 부트캠프 · 특강 1회차 · Google Colab 핸즈�
 
 1.  브라우저에서 colab.research.google.com 에 접속합니다.
 
-2.  메뉴 **파일 → 노트북 업로드**를 누르고 yolo_day1_ppe_lab_v1.1.ipynb를 고릅니다.
+2.  메뉴 **파일 → 노트북 업로드**를 누르고 01_yolo_day1_ppe_lab_v1.1.ipynb를 고릅니다.
 
-3.  실습 2~4를 할 때는 같은 방법으로 yolo_day1_case_demos_v1.1.ipynb를 새 탭에 엽니다.
+3.  실습 2~4를 할 때는 같은 방법으로 02_yolo_day1_case_demos_v1.1.ipynb를 새 탭에 엽니다.
 
 ## 1-3. GPU 켜기
 
@@ -71,7 +71,7 @@ KDT 심화 · YOLO 기반 부트캠프 · 특강 1회차 · Google Colab 핸즈�
 
 | **항목** | **내용**                                                                                               |
 |----------|--------------------------------------------------------------------------------------------------------|
-| 노트북   | yolo_day1_ppe_lab_v1.1.ipynb                                                                           |
+| 노트북   | 01_yolo_day1_ppe_lab_v1.1.ipynb                                                                           |
 | 데이터   | Ultralytics Construction-PPE · 학습 1,132장 / 검증 143장 / 테스트 141장 · 11클래스 · 라이선스 AGPL-3.0 |
 | 모델     | YOLO26n (사전학습 가중치에서 출발하는 전이학습)                                                        |
 | 결과물   | portfolio_ppe.zip (포트폴리오 초안, 결과 이미지 3장, CSV 2개, best.pt)                                 |
@@ -216,7 +216,7 @@ KDT 심화 · YOLO 기반 부트캠프 · 특강 1회차 · Google Colab 핸즈�
 
 | **항목** | **내용**                                                                           |
 |----------|------------------------------------------------------------------------------------|
-| 노트북   | yolo_day1_case_demos_v1.1.ipynb · 0장(준비), 2장                                   |
+| 노트북   | 02_yolo_day1_case_demos_v1.1.ipynb · 0장(준비), 2장                                   |
 | 데이터   | Ultralytics Package-seg · 학습 1,920장 / 검증 188장 / 테스트 89장 · 클래스 package |
 | 모델     | YOLO26n-seg (분할 모델)                                                            |
 
