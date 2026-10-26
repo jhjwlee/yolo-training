@@ -17,10 +17,13 @@ day1/        1회차 노트북(01~04)과 해설서(md)
 day2/        2회차 노트북(01~06)
 day2/guides/ 2회차 해설서(md) — 노트북 번호와 같은 번호
 workshop/    워크숍 안내서(01)와 시작 노트북(02)
+concepts/    개념 참고자료 (지표 읽는 법 등)
 */word/      같은 해설서의 Word(docx)·PDF 파일 — 내려받아 인쇄하거나 보관할 때
 ```
 
 해설서는 GitHub에서 **md 파일을 바로 열어 읽으면** 됩니다. `word/` 폴더는 같은 내용의 내려받기용 파일입니다.
+
+**참고자료** — [탐지 성능 지표 읽기: mAP와 혼동 행렬](concepts/01_yolo_metrics_mAP_confusion_v1.0.md) (IoU · TP/FP/FN · 정밀도/재현율 · PR 곡선 · mAP50/50-95 · Box vs Mask · 혼동 행렬을 실습 01·06 결과로 설명)
 
 ---
 
