@@ -1,6 +1,6 @@
 # YOLO 2회차 추가 실습 — 말로 찾는 탐지기 (YOLOE)
 
-노트북: [`yolo_day2_prompt_lab_v1.0.ipynb`](../yolo_day2_prompt_lab_v1.0.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_prompt_lab_v1.0.ipynb)
+노트북: [`yolo_day2_prompt_lab_v1.1.ipynb`](../yolo_day2_prompt_lab_v1.1.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_prompt_lab_v1.1.ipynb)
 
 | 항목 | 내용 |
 |---|---|
@@ -51,7 +51,10 @@ YOLOE는 단어를 이해하기 위해 텍스트 인코더를 씁니다. 그래�
 ### 셀 1. Ultralytics와 CLIP 패키지 설치
 
 ```python
+# !로 시작하는 줄은 파이썬이 아닌 셸 명령
+# YOLO·YOLOE 모델과 학습·평가 도구 설치 (-q: 설치 메시지 줄임)
 !pip -q install ultralytics
+# YOLOE가 단어를 벡터로 바꿀 때 쓰는 CLIP 패키지 설치
 !pip -q install git+https://github.com/ultralytics/CLIP.git
 ```
 
@@ -70,6 +73,7 @@ YOLOE는 단어를 이해하기 위해 텍스트 인코더를 씁니다. 그래�
 ### 셀 2. 라이브러리 불러오기, Drive 연결, 저장 폴더와 도우미 함수 정의
 
 ```python
+# 필요한 라이브러리 불러오기
 import os, json, time, shutil, glob
 from pathlib import Path
 
@@ -79,48 +83,52 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import torch
 from IPython.display import display
-from ultralytics import YOLO, YOLOE
-from ultralytics.data.utils import check_det_dataset
+from ultralytics import YOLO, YOLOE  # YOLO: 일반 모델(실습 A용), YOLOE: 단어로 찾는 모델
+from ultralytics.data.utils import check_det_dataset  # 데이터셋 내려받기 + 경로·클래스 정보 반환
 
-print('GPU 사용 가능:', torch.cuda.is_available())
+print('GPU 사용 가능:', torch.cuda.is_available())  # T4 GPU 런타임이면 True
 
+# Colab에서만 성공하는 import로 실행 환경 구분
 try:
     from google.colab import drive
     IN_COLAB = True
 except ImportError:
     IN_COLAB = False
 
-USE_DRIVE = True
+USE_DRIVE = True  # False: 로컬 outputs 사용 (Step 4에서 실습 A 모델 못 찾음)
 if IN_COLAB and USE_DRIVE:
-    drive.mount('/content/drive')
-    DAY2_DIR = Path('/content/drive/MyDrive/yolo_day2')
+    drive.mount('/content/drive')  # Google 계정 권한 창이 뜨면 허용
+    DAY2_DIR = Path('/content/drive/MyDrive/yolo_day2')  # 실습 A와 같은 2회차 공용 폴더
 else:
     DAY2_DIR = Path('outputs')
-SAVE_DIR = DAY2_DIR / 'prompt'
-SAVE_DIR.mkdir(parents=True, exist_ok=True)
+SAVE_DIR = DAY2_DIR / 'prompt'  # 이 실습의 결과 폴더
+SAVE_DIR.mkdir(parents=True, exist_ok=True)  # 상위 폴더까지 생성, 이미 있어도 오류 없음
 print('결과 저장 위치:', SAVE_DIR.resolve())
 
+# OpenCV BGR 이미지 한 장을 화면에 표시
 def show_bgr(img, title=None, size=(9, 6)):
     plt.figure(figsize=size)
-    plt.imshow(img[..., ::-1]); plt.axis('off')
+    plt.imshow(img[..., ::-1]); plt.axis('off')  # [..., ::-1]: 채널 순서 BGR → RGB로 뒤집기
     if title:
         plt.title(title)
     plt.show()
 
+# 이미지 여러 장을 cols열 격자로 표시 (titles: 칸별 제목)
 def show_grid(imgs, titles=None, cols=3, size=4):
-    rows = (len(imgs) + cols - 1) // cols
+    rows = (len(imgs) + cols - 1) // cols  # 필요한 행 수 (올림 나눗셈)
     fig, axes = plt.subplots(rows, cols, figsize=(size * cols, size * rows))
-    for ax, i in zip(np.array(axes).ravel(), range(rows * cols)):
-        ax.axis('off')
+    for ax, i in zip(np.array(axes).ravel(), range(rows * cols)):  # 2차원 칸 배열을 한 줄로 펴서 차례로 채움
+        ax.axis('off')  # 축 눈금 숨김 (남는 칸은 빈칸으로)
         if i < len(imgs):
-            ax.imshow(imgs[i][..., ::-1])
+            ax.imshow(imgs[i][..., ::-1])  # BGR → RGB로 바꿔 표시
             if titles:
                 ax.set_title(titles[i], fontsize=9)
     plt.tight_layout(); plt.show()
 
+# 결과 파일을 SAVE_DIR(Drive)로 복사하고 복사된 경로 반환
 def save_out(path):
     dst = SAVE_DIR / Path(path).name
-    if Path(path).resolve() != dst.resolve():
+    if Path(path).resolve() != dst.resolve():  # 이미 같은 파일이면 복사 생략
         shutil.copy(path, dst)
     return dst
 ```
@@ -146,10 +154,10 @@ def save_out(path):
 
 ```python
 # 데이터셋 두 개 내려받기 (처음 한 번, 합계 약 280MB)
-PKG = check_det_dataset('package-seg.yaml')
-PPE = check_det_dataset('construction-ppe.yaml')
-PKG_ROOT, PPE_ROOT = Path(PKG['path']), Path(PPE['path'])
-print('package-seg     :', PKG_ROOT, PKG['names'])
+PKG = check_det_dataset('package-seg.yaml')  # 택배 상자 CCTV (실습 A와 같은 데이터)
+PPE = check_det_dataset('construction-ppe.yaml')  # 건설 현장 안전장비, 11개 클래스
+PKG_ROOT, PPE_ROOT = Path(PKG['path']), Path(PPE['path'])  # 데이터셋 최상위 폴더 (images/, labels/ 포함)
+print('package-seg     :', PKG_ROOT, PKG['names'])  # names: {클래스 번호: 이름} 딕셔너리
 print('construction-ppe:', PPE_ROOT, PPE['names'])
 ```
 
@@ -181,19 +189,20 @@ YOLOE는 오픈 보캐뷸러리(open-vocabulary) 탐지 모델입니다. 텍스�
 ### 셀 4. YOLOE 모델을 불러와 단어 4개로 샘플 6장 탐지
 
 ```python
-model = YOLOE('yoloe-26s-seg.pt')
-model.set_classes(['person', 'helmet', 'safety vest', 'cardboard box'])
+model = YOLOE('yoloe-26s-seg.pt')  # YOLOE s 크기 세그멘테이션 모델 (없으면 자동 다운로드)
+model.set_classes(['person', 'helmet', 'safety vest', 'cardboard box'])  # 찾을 단어 목록 (첫 호출 때 텍스트 인코더 다운로드)
 
-ppe_test = sorted((PPE_ROOT / 'images' / 'test').glob('*'))
-pkg_val = sorted((PKG_ROOT / 'images' / 'val').glob('*.jpg'))
-samples = [ppe_test[0], ppe_test[2], ppe_test[5], pkg_val[3], pkg_val[95], pkg_val[150]]
+ppe_test = sorted((PPE_ROOT / 'images' / 'test').glob('*'))  # 안전장비 테스트 이미지 (정렬 → 매번 같은 순서)
+pkg_val = sorted((PKG_ROOT / 'images' / 'val').glob('*.jpg'))  # 택배 CCTV 검증 이미지
+samples = [ppe_test[0], ppe_test[2], ppe_test[5], pkg_val[3], pkg_val[95], pkg_val[150]]  # 공사 현장 3장 + CCTV 3장
 
+# 샘플마다 탐지하고 결과 이미지·제목 모으기
 imgs, titles = [], []
 for p in samples:
-    r = model.predict(str(p), conf=0.25, verbose=False)[0]
-    imgs.append(r.plot())
-    names = [r.names[int(c)] for c in r.boxes.cls]
-    titles.append(', '.join(f'{n} {names.count(n)}' for n in dict.fromkeys(names)) or 'nothing found')
+    r = model.predict(str(p), conf=0.25, verbose=False)[0]  # conf=0.25: 점수 0.25 미만 박스는 버림, [0]: 첫 이미지 결과
+    imgs.append(r.plot())  # 박스·마스크·라벨을 그린 이미지(BGR)
+    names = [r.names[int(c)] for c in r.boxes.cls]  # 박스별 클래스 번호 → 단어
+    titles.append(', '.join(f'{n} {names.count(n)}' for n in dict.fromkeys(names)) or 'nothing found')  # 단어별 개수 제목, 하나도 없으면 nothing found
 show_grid(imgs, titles)
 ```
 
@@ -230,18 +239,20 @@ show_grid(imgs, titles)
 ### 셀 5. 단어 5개로 같은 사진을 탐지하고 결과를 나란히 비교
 
 ```python
-PROMPTS = ['package', 'box', 'cardboard box', 'parcel', 'carton box']
-probe = pkg_val[60]
-LOW_CONF = 0.003          # CCTV 상자에는 점수가 아주 낮게 나오므로 기준을 크게 낮춰서 봅니다
+PROMPTS = ['package', 'box', 'cardboard box', 'parcel', 'carton box']  # 비교할 단어 5개 (Step 3에서도 사용)
+probe = pkg_val[60]  # 비교에 쓸 CCTV 사진 한 장
+LOW_CONF = 0.003          # CCTV 상자는 점수가 매우 낮아 기준을 크게 낮춤 (올리면 박스 줄어듦)
 
+# 단어를 하나씩 바꿔 가며 같은 사진 탐지
 imgs, titles = [], []
 for word in PROMPTS:
-    model.set_classes([word])
+    model.set_classes([word])  # 찾을 단어만 교체 (모델 가중치는 그대로)
     r = model.predict(str(probe), conf=LOW_CONF, verbose=False)[0]
-    conf = r.boxes.conf.cpu().numpy()
-    imgs.append(r.plot(labels=False))
-    titles.append(f'"{word}": {len(conf)} boxes, max conf {conf.max():.3f}' if len(conf) else f'"{word}": 0 boxes')
-gt_n = len(open(str(probe).replace('images', 'labels').rsplit('.', 1)[0] + '.txt').read().strip().splitlines())
+    conf = r.boxes.conf.cpu().numpy()  # 박스별 점수 → 넘파이 배열 (GPU → CPU)
+    imgs.append(r.plot(labels=False))  # 클래스 이름은 빼고 박스·점수만 그림
+    titles.append(f'"{word}": {len(conf)} boxes, max conf {conf.max():.3f}' if len(conf) else f'"{word}": 0 boxes')  # 박스가 0개면 max() 오류를 피해 따로 표기
+# 이미지 경로 → 정답 라벨 경로 (images→labels, 확장자→.txt)
+gt_n = len(open(str(probe).replace('images', 'labels').rsplit('.', 1)[0] + '.txt').read().strip().splitlines())  # 라벨 파일 줄 수 = 정답 상자 수
 show_grid(imgs, titles)
 print('이 사진의 정답 상자 수:', gt_n)
 ```
@@ -279,22 +290,25 @@ YOLOE의 val()은 데이터셋 설정 파일의 클래스 이름을 그대로 �
 ### 셀 6. 단어별 데이터셋 설정 파일을 만들어 val()로 평가하고 표로 정리
 
 ```python
+# 단어(word)를 클래스 이름으로 넣은 데이터셋 설정 파일을 만들고 경로 반환
 def make_yaml(word, path):
-    cfg = {'path': str(PKG_ROOT), 'train': 'images/train', 'val': 'images/val', 'names': {0: word}}
+    cfg = {'path': str(PKG_ROOT), 'train': 'images/train', 'val': 'images/val', 'names': {0: word}}  # 이미지·라벨은 그대로, 클래스 0 이름만 단어로
     Path(path).write_text(json.dumps(cfg))     # JSON은 YAML의 부분집합이라 그대로 읽힘
     return path
 
+# 단어마다 설정 파일을 만들어 검증 이미지 188장으로 평가
 battle = []
 for word in PROMPTS:
-    yml = make_yaml(word, f'pkg_{word.replace(" ", "_")}.yaml')
-    m = YOLOE('yoloe-26s-seg.pt')
-    res = m.val(data=yml, split='val', imgsz=640, batch=16, verbose=False, plots=False)
-    battle.append({'prompt': word, 'precision': round(res.box.mp, 3), 'recall': round(res.box.mr, 3),
-                   'map50': round(res.box.map50, 3), 'map50_95': round(res.box.map, 3)})
+    yml = make_yaml(word, f'pkg_{word.replace(" ", "_")}.yaml')  # 공백은 밑줄로 바꿔 파일 이름 만듦
+    m = YOLOE('yoloe-26s-seg.pt')  # 단어마다 새 모델 — 이전 설정이 남지 않게
+    # batch=16: 한 번에 처리할 이미지 수 (메모리 부족하면 8로)
+    res = m.val(data=yml, split='val', imgsz=640, batch=16, verbose=False, plots=False)  # val(): 설정 파일의 클래스 이름을 프롬프트로 써서 평가
+    battle.append({'prompt': word, 'precision': round(res.box.mp, 3), 'recall': round(res.box.mr, 3),  # mp: 평균 정밀도, mr: 평균 재현율
+                   'map50': round(res.box.map50, 3), 'map50_95': round(res.box.map, 3)})  # res.box.map = mAP50-95
     print(f'{word:15s} mAP50 {res.box.map50:.3f}')
 
-battle = pd.DataFrame(battle).sort_values('map50', ascending=False).reset_index(drop=True)
-battle.to_csv('prompt_battle.csv', index=False); save_out('prompt_battle.csv')
+battle = pd.DataFrame(battle).sort_values('map50', ascending=False).reset_index(drop=True)  # mAP50 높은 순 정렬, 번호 0부터 다시 → 0번이 1등
+battle.to_csv('prompt_battle.csv', index=False); save_out('prompt_battle.csv')  # CSV 저장 후 Drive로 복사
 battle
 ```
 
@@ -319,12 +333,12 @@ battle
 
 ```python
 plt.figure(figsize=(8, 3.5))
-bars = plt.bar(battle['prompt'], battle['map50'], color=['tab:green'] + ['tab:gray'] * (len(battle) - 1))
+bars = plt.bar(battle['prompt'], battle['map50'], color=['tab:green'] + ['tab:gray'] * (len(battle) - 1))  # 1등(첫 막대)만 초록, 나머지 회색
 for b, v in zip(bars, battle['map50']):
-    plt.text(b.get_x() + b.get_width() / 2, v + 0.01, f'{v:.2f}', ha='center')
-plt.ylim(0, 1); plt.ylabel('mAP50'); plt.title('Prompt battle on package-seg val (188 images)')
+    plt.text(b.get_x() + b.get_width() / 2, v + 0.01, f'{v:.2f}', ha='center')  # 막대 가운데 위에 값 표시
+plt.ylim(0, 1); plt.ylabel('mAP50'); plt.title('Prompt battle on package-seg val (188 images)')  # y축 0~1 고정 → 단어 사이 차이를 공정하게 비교
 plt.show()
-BEST_PROMPT = battle.loc[0, 'prompt']
+BEST_PROMPT = battle.loc[0, 'prompt']  # 1등 단어 → Step 4에서 사용
 print('우승 단어:', BEST_PROMPT)
 ```
 
@@ -356,29 +370,32 @@ print('우승 단어:', BEST_PROMPT)
 ### 셀 8. 제로샷 모델과 실습 A 모델의 정확도·속도·준비 비용 비교표 만들기
 
 ```python
+# 모델 m으로 images 앞 n장을 예측해 한 장당 평균 시간(ms) 반환
 def ms_per_image(m, images, n=40, **kw):
     m.predict(str(images[0]), verbose=False, **kw)              # 예열 (첫 호출은 느림)
     t0 = time.time()
     for p in images[:n]:
         m.predict(str(p), verbose=False, **kw)
-    return (time.time() - t0) / n * 1000
+    return (time.time() - t0) / n * 1000  # 초 → 밀리초
 
+# ① 우승 단어를 쓴 YOLOE 제로샷 모델 (라벨 0장, 학습 없음)
 compare = []
-zs = YOLOE('yoloe-26s-seg.pt'); zs.set_classes([BEST_PROMPT])
+zs = YOLOE('yoloe-26s-seg.pt'); zs.set_classes([BEST_PROMPT])  # 우승 단어 하나만 찾게 설정
 compare.append({'model': f'YOLOE zero-shot ("{BEST_PROMPT}")', 'labeled_images': 0, 'training': 'none',
-                'map50': battle.loc[0, 'map50'], 'ms_per_image': round(ms_per_image(zs, pkg_val), 1)})
+                'map50': battle.loc[0, 'map50'], 'ms_per_image': round(ms_per_image(zs, pkg_val), 1)})  # mAP50은 Step 3에서 잰 1등 값 재사용
 
-LAB_A_MODEL = DAY2_DIR / 'box_seg_best.pt'
+# ② 실습 A에서 학습한 모델 (Drive에 파일이 있을 때만)
+LAB_A_MODEL = DAY2_DIR / 'box_seg_best.pt'  # MyDrive/yolo_day2/box_seg_best.pt
 if LAB_A_MODEL.exists():
     ft = YOLO(LAB_A_MODEL)
-    res = ft.val(data='package-seg.yaml', split='val', batch=16, verbose=False, plots=False)
+    res = ft.val(data='package-seg.yaml', split='val', batch=16, verbose=False, plots=False)  # 같은 검증 이미지 188장으로 평가
     compare.append({'model': 'Lab A fine-tuned (yolo26n-seg)', 'labeled_images': 1920, 'training': 'yes',
                     'map50': round(res.box.map50, 3), 'ms_per_image': round(ms_per_image(ft, pkg_val), 1)})
 else:
     print('실습 A 모델이 없습니다. 실습 A를 먼저 실행하면 이 표에 함께 나옵니다.')
 
 compare = pd.DataFrame(compare)
-compare.to_csv('model_compare.csv', index=False); save_out('model_compare.csv')
+compare.to_csv('model_compare.csv', index=False); save_out('model_compare.csv')  # CSV 저장 후 Drive로 복사
 compare
 ```
 
@@ -413,38 +430,42 @@ model, labeled_images, training, map50, ms_per_image 열의 표가 나옵니다.
 ### 셀 9. 착용 판정 규칙(helmet_check)과 표시 함수(draw_check) 정의, 테스트 6장에 적용
 
 ```python
-HEAD_RATIO = 0.35
+HEAD_RATIO = 0.35  # 사람 박스 위쪽 35%를 머리 영역으로 봄 (키우면 착용 판정 늘어남)
 
+# 사람마다 머리 영역에 안전모 중심이 있는지 판정
 def helmet_check(r):
     """YOLOE 결과 → [(사람 박스, 착용 여부)]"""
-    boxes, cls = r.boxes.xyxy.cpu().numpy(), r.boxes.cls.cpu().numpy().astype(int)
-    names = r.names
-    persons = boxes[[names[c] == 'person' for c in cls]]
-    helmets = boxes[[names[c] == 'helmet' for c in cls]]
+    boxes, cls = r.boxes.xyxy.cpu().numpy(), r.boxes.cls.cpu().numpy().astype(int)  # xyxy: 꼭짓점 픽셀 좌표, cls: 클래스 번호
+    names = r.names  # {클래스 번호: 단어} 딕셔너리
+    persons = boxes[[names[c] == 'person' for c in cls]]  # True/False 목록으로 person 박스만 골라냄
+    helmets = boxes[[names[c] == 'helmet' for c in cls]]  # helmet 박스만 골라냄
     out = []
     for x1, y1, x2, y2 in persons:
-        head_y2 = y1 + (y2 - y1) * HEAD_RATIO
+        head_y2 = y1 + (y2 - y1) * HEAD_RATIO  # 머리 영역 아래 경계 y (이미지 y는 아래로 커짐)
+        # 안전모 중심 x가 사람 박스 안 + 중심 y가 머리 영역 안이면 착용
+        # (위쪽은 사람 박스 높이의 10%만큼 더 위까지 허용)
         worn = any(x1 <= (hx1 + hx2) / 2 <= x2 and y1 - (y2 - y1) * 0.1 <= (hy1 + hy2) / 2 <= head_y2
-                   for hx1, hy1, hx2, hy2 in helmets)
+                   for hx1, hy1, hx2, hy2 in helmets)  # 안전모를 하나씩 검사, 하나라도 맞으면 True
         out.append(((x1, y1, x2, y2), worn))
     return out
 
+# 판정 결과를 이미지에 그림: 착용 초록, 미착용 빨강
 def draw_check(img, checks):
     for (x1, y1, x2, y2), worn in checks:
-        col = (0, 200, 0) if worn else (0, 0, 255)
-        cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)), col, 3)
+        col = (0, 200, 0) if worn else (0, 0, 255)  # OpenCV 색 순서는 BGR → (0, 0, 255)가 빨강
+        cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)), col, 3)  # 사람 박스 테두리 (두께 3)
         label = 'HELMET OK' if worn else 'NO HELMET'
-        cv2.rectangle(img, (int(x1), int(y1) - 24), (int(x1) + 130, int(y1)), col, -1)
-        cv2.putText(img, label, (int(x1) + 4, int(y1) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.rectangle(img, (int(x1), int(y1) - 24), (int(x1) + 130, int(y1)), col, -1)  # 글자 배경 띠 (두께 -1 = 속 채움)
+        cv2.putText(img, label, (int(x1) + 4, int(y1) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)  # 흰 글자로 판정 표시
     return img
 
-model.set_classes(['person', 'helmet'])
+model.set_classes(['person', 'helmet'])  # Step 2에서 바꾼 단어 목록을 사람·안전모로 재설정
 imgs, titles = [], []
 for p in ppe_test[:6]:
-    r = model.predict(str(p), conf=0.3, verbose=False)[0]
+    r = model.predict(str(p), conf=0.3, verbose=False)[0]  # 점수 0.3 이상 박스만 사용
     ch = helmet_check(r)
-    imgs.append(draw_check(r.orig_img.copy(), ch))
-    titles.append(f'{sum(not w for _, w in ch)} without helmet / {len(ch)} people')
+    imgs.append(draw_check(r.orig_img.copy(), ch))  # 원본 복사본에 그림 (원본 보존)
+    titles.append(f'{sum(not w for _, w in ch)} without helmet / {len(ch)} people')  # 미착용 수 / 사람 수
 show_grid(imgs, titles)
 ```
 
@@ -468,25 +489,27 @@ show_grid(imgs, titles)
 ### 셀 10. 테스트 이미지 141장을 정답 라벨로 채점하고 재현율·정밀도 계산
 
 ```python
-NO_HELMET = [k for k, v in PPE['names'].items() if v == 'no_helmet'][0]
+NO_HELMET = [k for k, v in PPE['names'].items() if v == 'no_helmet'][0]  # 이름이 no_helmet인 클래스 번호 찾기
 
+# 테스트 이미지마다 정답 라벨과 규칙 판정을 기록
 rows = []
 for p in ppe_test:
-    lbl = PPE_ROOT / 'labels' / 'test' / (p.stem + '.txt')
-    gt_cls = [int(l.split()[0]) for l in lbl.read_text().strip().splitlines()] if lbl.exists() else []
+    lbl = PPE_ROOT / 'labels' / 'test' / (p.stem + '.txt')  # 이미지와 같은 이름의 정답 라벨 파일
+    gt_cls = [int(l.split()[0]) for l in lbl.read_text().strip().splitlines()] if lbl.exists() else []  # 각 줄 첫 숫자 = 클래스 번호, 파일 없으면 빈 목록
     r = model.predict(str(p), conf=0.3, verbose=False)[0]
     ch = helmet_check(r)
-    rows.append({'image': p.name, 'gt_no_helmet': int(NO_HELMET in gt_cls),
-                 'pred_no_helmet': int(any(not w for _, w in ch)), 'people_found': len(ch)})
+    rows.append({'image': p.name, 'gt_no_helmet': int(NO_HELMET in gt_cls),  # 정답에 no_helmet이 있으면 1
+                 'pred_no_helmet': int(any(not w for _, w in ch)), 'people_found': len(ch)})  # 규칙이 미착용자를 1명이라도 찾으면 1
 check = pd.DataFrame(rows)
-check.to_csv('helmet_check.csv', index=False); save_out('helmet_check.csv')
+check.to_csv('helmet_check.csv', index=False); save_out('helmet_check.csv')  # CSV 저장 후 Drive로 복사
 
+# 두 조건을 &로 묶어 TP·FN·FP·TN 이미지 수 세기
 tp = int(((check.gt_no_helmet == 1) & (check.pred_no_helmet == 1)).sum())
 fn = int(((check.gt_no_helmet == 1) & (check.pred_no_helmet == 0)).sum())
 fp = int(((check.gt_no_helmet == 0) & (check.pred_no_helmet == 1)).sum())
 tn = int(((check.gt_no_helmet == 0) & (check.pred_no_helmet == 0)).sum())
 print(f'테스트 이미지 {len(check)}장 | TP {tp}  FN {fn}  FP {fp}  TN {tn}')
-print(f'재현율(미착용 이미지를 찾은 비율) {tp / max(tp + fn, 1):.2f} | 정밀도(경보가 맞은 비율) {tp / max(tp + fp, 1):.2f}')
+print(f'재현율(미착용 이미지를 찾은 비율) {tp / max(tp + fn, 1):.2f} | 정밀도(경보가 맞은 비율) {tp / max(tp + fp, 1):.2f}')  # max(..., 1): 분모 0 방지
 ```
 
 **코드 설명**
@@ -510,12 +533,12 @@ print(f'재현율(미착용 이미지를 찾은 비율) {tp / max(tp + fn, 1):.2
 ```python
 # 놓친 사례(FN)와 헛경보(FP) 눈으로 보기
 imgs, titles = [], []
-for kind, cond in [('FN (missed)', (check.gt_no_helmet == 1) & (check.pred_no_helmet == 0)),
+for kind, cond in [('FN (missed)', (check.gt_no_helmet == 1) & (check.pred_no_helmet == 0)),  # cond: 판다스 True/False 열 (FN, FP 차례로)
                    ('FP (false alarm)', (check.gt_no_helmet == 0) & (check.pred_no_helmet == 1))]:
-    for name in check.loc[cond, 'image'].head(3):
+    for name in check.loc[cond, 'image'].head(3):  # 조건에 맞는 이미지 이름 최대 3개
         r = model.predict(str(PPE_ROOT / 'images' / 'test' / name), conf=0.3, verbose=False)[0]
-        imgs.append(draw_check(r.orig_img.copy(), helmet_check(r))); titles.append(f'{kind}: {name}')
-if imgs:
+        imgs.append(draw_check(r.orig_img.copy(), helmet_check(r))); titles.append(f'{kind}: {name}')  # 판정을 그리고 제목 기록
+if imgs:  # 보여 줄 사례가 있을 때만 그림
     show_grid(imgs, titles)
 ```
 

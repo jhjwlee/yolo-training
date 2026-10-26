@@ -1,6 +1,6 @@
 # YOLO 2회차 실습 A — 컨베이어 상자 '크기별' 자동 집계
 
-노트북: [`yolo_day2_box_lab_v1.1.ipynb`](../yolo_day2_box_lab_v1.1.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_box_lab_v1.1.ipynb)
+노트북: [`yolo_day2_box_lab_v1.2.ipynb`](../yolo_day2_box_lab_v1.2.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_box_lab_v1.2.ipynb)
 
 | 항목 | 내용 |
 |---|---|
@@ -51,6 +51,7 @@ Colab 런타임은 일정 시간 쓰지 않거나 사용량 한도에 걸리면 
 ### 셀 1. 실습에 필요한 라이브러리를 설치합니다
 
 ```python
+# ultralytics: YOLO 라이브러리 / lap: 트래커 짝짓기 계산 / shapely: 다각형 계산
 !pip -q install ultralytics lap shapely
 ```
 
@@ -70,18 +71,21 @@ Colab 런타임은 일정 시간 쓰지 않거나 사용량 한도에 걸리면 
 ### 셀 2. 라이브러리를 불러오고 GPU 사용 여부를 확인합니다
 
 ```python
+# 파이썬 기본 도구 — 파일·경로·시간·정규식 등
 import os, json, shutil, base64, subprocess, re, time, glob
 from pathlib import Path
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict  # Counter: 개수 세기 / defaultdict: 기본값 딕셔너리
 
+# 이미지·영상 처리, 배열 계산, 표, 그래프, 딥러닝 프레임워크
 import cv2
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import torch
-from IPython.display import HTML, Image, display
-from ultralytics import YOLO
+from IPython.display import HTML, Image, display  # 노트북 안에 영상·그림 표시
+from ultralytics import YOLO  # 모델 불러오기·학습·추론·트래킹 핵심 클래스
 
+# GPU 확인 — False면 런타임 유형을 T4 GPU로 바꿀 것
 print('GPU 사용 가능:', torch.cuda.is_available())
 if torch.cuda.is_available():
     print('GPU:', torch.cuda.get_device_name(0))
@@ -106,8 +110,9 @@ T4 GPU 런타임이면 `GPU 사용 가능: True`와 GPU 이름이 출력됩니�
 
 ```python
 # 결과 저장 위치 — Google Drive를 연결하면 런타임이 끊겨도 결과가 남습니다
-USE_DRIVE = True
+USE_DRIVE = True  # False로 바꾸면 런타임 안 outputs 폴더에 저장 (끊기면 사라짐)
 
+# google.colab 모듈을 불러올 수 있으면 Colab 환경으로 판단
 try:
     from google.colab import drive
     IN_COLAB = True
@@ -116,10 +121,10 @@ except ImportError:
 
 if IN_COLAB and USE_DRIVE:
     drive.mount('/content/drive')            # 처음 한 번 Google 계정 접근 허용 창이 뜹니다
-    SAVE_DIR = Path('/content/drive/MyDrive/yolo_day2')
+    SAVE_DIR = Path('/content/drive/MyDrive/yolo_day2')  # 통합 실습도 이 폴더를 씀
 else:
     SAVE_DIR = Path('outputs')
-SAVE_DIR.mkdir(parents=True, exist_ok=True)
+SAVE_DIR.mkdir(parents=True, exist_ok=True)  # 상위 폴더까지 생성, 이미 있으면 그냥 통과
 print('결과 저장 위치:', SAVE_DIR.resolve())
 ```
 
@@ -141,9 +146,11 @@ Colab에서 Drive 연결을 허용하면 `결과 저장 위치: /content/drive/M
 
 ```python
 # 학습 설정 — 시간이 부족하면 QUICK_RUN = True (학습을 짧게 줄입니다)
-QUICK_RUN = False
+QUICK_RUN = False  # True: 3 epoch·416px로 빨리 끝나지만 정확도는 낮아짐
 
+# epochs: 전체 데이터 반복 횟수 / imgsz: 입력 이미지 크기(px) / batch: 한 번에 넣는 장수
 CFG = dict(epochs=20, imgsz=640, batch=16) if not QUICK_RUN else dict(epochs=3, imgsz=416, batch=16)
+# 이후 학습·평가·추론·트래킹 모두 CFG 값을 같이 씀
 print(CFG)
 ```
 
@@ -162,37 +169,42 @@ print(CFG)
 
 ```python
 # 화면 표시용 도우미 함수
+# show_bgr: OpenCV 이미지(BGR) 한 장을 화면에 표시 (반환값 없음)
 def show_bgr(img, title=None, size=(9, 6)):
     plt.figure(figsize=size)
-    plt.imshow(img[..., ::-1]); plt.axis('off')
+    plt.imshow(img[..., ::-1]); plt.axis('off')  # [..., ::-1]: 색 순서 BGR→RGB로 뒤집기
     if title:
         plt.title(title)
     plt.show()
 
+# show_grid: 여러 이미지를 cols열 격자로 한 번에 표시
 def show_grid(imgs, titles=None, cols=2, size=4.5):
-    rows = (len(imgs) + cols - 1) // cols
+    rows = (len(imgs) + cols - 1) // cols  # 필요한 행 수 (올림 나눗셈)
     fig, axes = plt.subplots(rows, cols, figsize=(size * cols, size * rows))
-    for ax, i in zip(np.array(axes).ravel(), range(rows * cols)):
+    for ax, i in zip(np.array(axes).ravel(), range(rows * cols)):  # 격자 칸을 1줄로 펴서 차례로 채움
         ax.axis('off')
-        if i < len(imgs):
+        if i < len(imgs):  # 이미지가 없는 남는 칸은 빈칸으로
             ax.imshow(imgs[i][..., ::-1])
             if titles:
                 ax.set_title(titles[i], fontsize=9)
     plt.tight_layout(); plt.show()
 
+# show_video: mp4 경로 → 노트북 안에서 재생 (반환값 없음)
 def show_video(path, width=360):
     """mp4 영상을 브라우저에서 재생 가능한 H.264로 바꿔 노트북에 표시"""
-    h264 = str(Path(path).with_name(Path(path).stem + '_h264.mp4'))
+    h264 = str(Path(path).with_name(Path(path).stem + '_h264.mp4'))  # 변환본 파일 이름: 원본이름_h264.mp4
+    # OpenCV가 만든 mp4v 영상은 브라우저 재생 불가 → ffmpeg로 H.264 재인코딩
     subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(path),
                     '-vcodec', 'libx264', '-pix_fmt', 'yuv420p', h264], check=True)
-    data = base64.b64encode(open(h264, 'rb').read()).decode()
+    data = base64.b64encode(open(h264, 'rb').read()).decode()  # 영상 파일을 문자열로 바꿔 HTML에 직접 넣음
     display(HTML(f'<video width="{width}" controls loop autoplay muted>'
                  f'<source src="data:video/mp4;base64,{data}" type="video/mp4"></video>'))
 
+# save_out: 파일 경로 → SAVE_DIR에 복사한 경로
 def save_out(path):
     """결과 파일을 저장 폴더(SAVE_DIR)에 복사"""
     dst = SAVE_DIR / Path(path).name
-    if Path(path).resolve() != dst.resolve():
+    if Path(path).resolve() != dst.resolve():  # 원본과 대상이 같은 파일이면 복사 생략
         shutil.copy(path, dst)
     return dst
 ```
@@ -226,14 +238,15 @@ def save_out(path):
 ```python
 from ultralytics.data.utils import check_det_dataset
 
-data = check_det_dataset('package-seg.yaml')
-DATA_ROOT = Path(data['path'])
+data = check_det_dataset('package-seg.yaml')  # 설정 읽기 + 데이터 없으면 자동 다운로드 → 딕셔너리
+DATA_ROOT = Path(data['path'])  # 데이터셋 최상위 폴더 (images/, labels/ 아래 분할별 폴더)
 print('데이터 위치:', DATA_ROOT)
-print('클래스:', data['names'])
+print('클래스:', data['names'])  # 클래스 번호 → 이름 대응표
+# 분할마다 이미지 수와 라벨 수가 맞는지 확인
 for split in ['train', 'val', 'test']:
     n_img = len(list((DATA_ROOT / 'images' / split).glob('*.jpg')))
     n_lbl = len(list((DATA_ROOT / 'labels' / split).glob('*.txt')))
-    print(f'{split:5s}: 이미지 {n_img:5d}장 / 라벨 {n_lbl:5d}개')
+    print(f'{split:5s}: 이미지 {n_img:5d}장 / 라벨 {n_lbl:5d}개')  # :5s, :5d → 5칸 폭으로 맞춰 출력
 ```
 
 **코드 설명**
@@ -253,38 +266,43 @@ for split in ['train', 'val', 'test']:
 ### 셀 7. 정답 라벨(다각형과 박스)을 읽어 샘플 이미지 4장에 그립니다
 
 ```python
+# read_gt: 이미지 경로 → 라벨 파일을 읽어 정답 박스·다각형(픽셀 좌표) 반환
 def read_gt(img_path):
     """이미지 경로 → (정답 박스 (N,4) [x1,y1,x2,y2], 정답 다각형 목록) 픽셀 좌표"""
     img_path = Path(img_path)
-    lbl = img_path.parent.parent.parent / 'labels' / img_path.parent.name / (img_path.stem + '.txt')
-    h, w = cv2.imread(str(img_path)).shape[:2]
+    lbl = img_path.parent.parent.parent / 'labels' / img_path.parent.name / (img_path.stem + '.txt')  # images/val/a.jpg → labels/val/a.txt
+    h, w = cv2.imread(str(img_path)).shape[:2]  # 이미지 높이·폭 (픽셀)
     boxes, polys = [], []
     if lbl.exists():
         for line in lbl.read_text().strip().splitlines():
-            v = np.array(line.split()[1:], float)
-            xs, ys = v[0::2] * w, v[1::2] * h
-            polys.append(np.stack([xs, ys], 1))
-            boxes.append([xs.min(), ys.min(), xs.max(), ys.max()])
-    return np.array(boxes).reshape(-1, 4), polys
+            v = np.array(line.split()[1:], float)  # 맨 앞 클래스 번호를 빼고 좌표만
+            xs, ys = v[0::2] * w, v[1::2] * h  # 짝수 번째=x, 홀수 번째=y, 0~1 → 픽셀
+            polys.append(np.stack([xs, ys], 1))  # (꼭짓점 수, 2) 모양 다각형
+            boxes.append([xs.min(), ys.min(), xs.max(), ys.max()])  # 다각형을 감싸는 사각형 [x1,y1,x2,y2]
+    return np.array(boxes).reshape(-1, 4), polys  # 상자가 0개여도 (0,4) 모양 유지
 
+# draw_boxes: 박스마다 사각형(+글자)을 그려 같은 이미지 반환
 def draw_boxes(img, boxes, color, label=None, thick=2):
     for b in boxes:
-        x1, y1, x2, y2 = map(int, b[:4])
+        x1, y1, x2, y2 = map(int, b[:4])  # 앞 4개 값(좌상단·우하단)을 정수 픽셀로
         cv2.rectangle(img, (x1, y1), (x2, y2), color, thick)
         if label:
-            cv2.putText(img, label, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            cv2.putText(img, label, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)  # 박스 위에 글자, 화면 밖으로 안 나가게
     return img
 
+# draw_polys: 다각형을 반투명하게 칠하고 테두리를 그린 이미지 반환
 def draw_polys(img, polys, color, alpha=0.35):
-    overlay = img.copy()
+    overlay = img.copy()  # 칠할 사본 — 나중에 원본과 섞음
     for p in polys:
         cv2.fillPoly(overlay, [p.astype(np.int32)], color)
         cv2.polylines(img, [p.astype(np.int32)], True, color, 2)
-    return cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+    return cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)  # 사본 35% + 원본 65% 섞기 → 반투명
 
+# 검증 이미지 목록과 고정 샘플 4장 (매번 같은 이미지)
 VAL_IMAGES = sorted((DATA_ROOT / 'images' / 'val').glob('*.jpg'))
 SAMPLES = [VAL_IMAGES[i] for i in (3, 40, 95, 150)]
 
+# 샘플마다 정답 다각형(초록)과 감싸는 박스(주황)를 그려 비교
 gt_imgs = []
 for p in SAMPLES:
     b, poly = read_gt(p)
@@ -311,8 +329,9 @@ show_grid(gt_imgs, [f'GT: {len(read_gt(p)[1])} packages (polygon + box)' for p i
 ### 셀 8. COCO 사전학습 탐지 모델로 같은 샘플을 탐지합니다
 
 ```python
-coco_model = YOLO('yolo26n.pt')
+coco_model = YOLO('yolo26n.pt')  # COCO 80클래스 사전학습 탐지 모델 (n = 가장 작은 크기)
 
+# [0]: 이미지 1장의 결과 / conf=0.25: 신뢰도 0.25 미만 버림 / .plot(): 결과 그림
 pred_imgs = [coco_model(str(p), verbose=False, conf=0.25)[0].plot() for p in SAMPLES]
 show_grid(pred_imgs, ['COCO pretrained'] * len(SAMPLES))
 ```
@@ -333,17 +352,17 @@ show_grid(pred_imgs, ['COCO pretrained'] * len(SAMPLES))
 
 ```python
 # 검증 이미지 전체에서 어떤 클래스로 탐지하는지 세어 봅니다
-cls_counter, no_det, total_gt = Counter(), 0, 0
+cls_counter, no_det, total_gt = Counter(), 0, 0  # 클래스별 탐지 수, 빈 이미지 수, 정답 상자 수
 for p in VAL_IMAGES:
     r = coco_model(str(p), verbose=False, conf=0.25)[0]
-    names = [r.names[int(c)] for c in r.boxes.cls]
+    names = [r.names[int(c)] for c in r.boxes.cls]  # r.boxes.cls: 클래스 번호 → 이름으로 변환
     cls_counter.update(names)
-    no_det += (len(names) == 0)
-    total_gt += len(read_gt(p)[0])
+    no_det += (len(names) == 0)  # 탐지 0개면 True(=1)가 더해짐
+    total_gt += len(read_gt(p)[0])  # 이 이미지의 정답 박스 수
 
 print(f'검증 이미지 {len(VAL_IMAGES)}장, 정답 상자 {total_gt}개')
 print(f'아무것도 찾지 못한 이미지: {no_det}장')
-pd.DataFrame(cls_counter.most_common(10), columns=['coco_class', 'count'])
+pd.DataFrame(cls_counter.most_common(10), columns=['coco_class', 'count'])  # 많이 나온 클래스 10개 표 (마지막 줄이라 화면 출력)
 ```
 
 **코드 설명**
@@ -373,16 +392,17 @@ COCO 모델은 '물체처럼 보이는 것'을 찾는 능력은 이미 갖고 �
 ### 셀 10. yolo26n-seg 모델을 상자 데이터로 파인튜닝하고 최고 가중치를 Drive에 복사합니다
 
 ```python
-model = YOLO('yolo26n-seg.pt')
-t0 = time.time()
+model = YOLO('yolo26n-seg.pt')  # COCO 사전학습 세그멘테이션 모델 — 학습 출발점
+t0 = time.time()  # 학습 시간 측정 시작
+# 파인튜닝: 결과는 runs_box/seg_baseline, 같은 폴더 있으면 덮어씀(exist_ok), seed=0 고정
 model.train(data='package-seg.yaml', epochs=CFG['epochs'], imgsz=CFG['imgsz'], batch=CFG['batch'],
             project='runs_box', name='seg_baseline', exist_ok=True, seed=0, verbose=False)
-TRAIN_MIN = (time.time() - t0) / 60
-RUN_DIR = Path(model.trainer.save_dir)
-BEST = RUN_DIR / 'weights' / 'best.pt'
+TRAIN_MIN = (time.time() - t0) / 60  # 학습 시간(분) — 2-7 실험 표에 기록
+RUN_DIR = Path(model.trainer.save_dir)  # 실제로 저장된 학습 결과 폴더
+BEST = RUN_DIR / 'weights' / 'best.pt'  # 검증 점수가 가장 좋았던 epoch의 가중치
 print(f'학습 시간: {TRAIN_MIN:.1f}분')
 print('최고 성능 가중치:', BEST)
-shutil.copy(BEST, SAVE_DIR / 'box_seg_best.pt')
+shutil.copy(BEST, SAVE_DIR / 'box_seg_best.pt')  # Drive 폴더에 복사 (통합 실습에서 사용)
 print('저장 폴더에 복사:', SAVE_DIR / 'box_seg_best.pt')
 ```
 
@@ -406,7 +426,7 @@ print('저장 폴더에 복사:', SAVE_DIR / 'box_seg_best.pt')
 
 ```python
 # epoch별 손실과 지표 변화
-display(Image(filename=str(RUN_DIR / 'results.png'), width=900))
+display(Image(filename=str(RUN_DIR / 'results.png'), width=900))  # Ultralytics가 학습 중 자동 저장한 그래프
 ```
 
 **코드 설명**
@@ -425,16 +445,19 @@ train/val 손실(`box_loss`, `seg_loss`, `cls_loss` 등)과 지표(`metrics/mAP5
 ### 셀 12. 최고 가중치로 val·test 세트를 평가해 지표 표를 만듭니다
 
 ```python
-best_model = YOLO(BEST)
+best_model = YOLO(BEST)  # 학습한 최고 가중치 — Step 5까지 이 모델 사용
 
+# evaluate: 모델, 분할 이름('val'/'test') → (지표 객체, 요약 딕셔너리)
 def evaluate(weights_model, split):
     m = weights_model.val(data='package-seg.yaml', split=split, imgsz=CFG['imgsz'], batch=CFG['batch'],
                           project='runs_box', name=f'val_{split}', exist_ok=True, verbose=False)
+    # box.mp/mr: 박스 Precision/Recall, map50·map: mAP50·mAP50-95, seg: 마스크 기준
     return m, {'split': split,
                'box_precision': round(m.box.mp, 3), 'box_recall': round(m.box.mr, 3),
                'box_map50': round(m.box.map50, 3), 'box_map50_95': round(m.box.map, 3),
                'mask_map50': round(m.seg.map50, 3), 'mask_map50_95': round(m.seg.map, 3)}
 
+# 검증(val)과 테스트(test) 세트 각각 평가 후 한 표로
 val_metrics, val_row = evaluate(best_model, 'val')
 test_metrics, test_row = evaluate(best_model, 'test')
 metrics_table = pd.DataFrame([val_row, test_row])
@@ -457,9 +480,9 @@ QUICK_RUN 검증 실행 예시: val은 `box_precision` 0.867, `box_recall` 0.889
 ### 셀 13. 박스와 마스크의 정밀도-재현율(PR) 곡선을 표시합니다
 
 ```python
-VAL_DIR = Path(val_metrics.save_dir)
-for name in ['BoxPR_curve.png', 'MaskPR_curve.png']:
-    if (VAL_DIR / name).exists():
+VAL_DIR = Path(val_metrics.save_dir)  # val 평가 결과가 저장된 폴더
+for name in ['BoxPR_curve.png', 'MaskPR_curve.png']:  # 박스·마스크 기준 정밀도-재현율(PR) 곡선
+    if (VAL_DIR / name).exists():  # 파일이 있을 때만 표시
         display(Image(filename=str(VAL_DIR / name), width=480))
 ```
 
@@ -477,33 +500,34 @@ PR 곡선 그림 2장이 표시됩니다. 곡선이 오른쪽 위 모서리에 �
 ### 셀 14. 예측마다 박스 면적과 마스크 면적의 비를 계산해 분포와 최악 사례를 봅니다
 
 ```python
-ratios, worst = [], None
+ratios, worst = [], None  # 면적비 목록, 차이가 가장 큰 예측
 for p in VAL_IMAGES:
-    r = best_model(str(p), conf=0.4, imgsz=CFG['imgsz'], verbose=False)[0]
-    if r.masks is None:
+    r = best_model(str(p), conf=0.4, imgsz=CFG['imgsz'], verbose=False)[0]  # 신뢰도 0.4 이상 예측만
+    if r.masks is None:  # 탐지가 하나도 없으면 masks가 None
         continue
-    for b, poly in zip(r.boxes.xyxy.cpu().numpy(), r.masks.xy):
-        if len(poly) < 3:
+    for b, poly in zip(r.boxes.xyxy.cpu().numpy(), r.masks.xy):  # xyxy: 박스 [x1,y1,x2,y2] / masks.xy: 마스크 윤곽선 좌표
+        if len(poly) < 3:  # 꼭짓점 3개 미만이면 면적 계산 불가 → 건너뜀
             continue
-        mask_area = cv2.contourArea(poly.astype(np.float32))
-        box_area = (b[2] - b[0]) * (b[3] - b[1])
-        if mask_area > 500:
+        mask_area = cv2.contourArea(poly.astype(np.float32))  # 윤곽선 내부 면적 = 마스크 면적 (px²)
+        box_area = (b[2] - b[0]) * (b[3] - b[1])  # 박스 면적 = 폭 × 높이
+        if mask_area > 500:  # 너무 작은 마스크는 비율이 튀므로 제외
             ratio = box_area / mask_area
             ratios.append(ratio)
-            if worst is None or ratio > worst[0]:
+            if worst is None or ratio > worst[0]:  # 가장 큰 비율의 예측을 기억
                 worst = (ratio, p, b, poly)
 
 ratios = np.array(ratios)
 print(f'예측 {len(ratios)}개 | 박스/마스크 면적비 중앙값 {np.median(ratios):.2f} | '
       f'1.5배 이상인 예측 {np.mean(ratios >= 1.5) * 100:.0f}%')
 
+# 차이가 가장 큰 예측: 빨강 = 박스, 초록 = 마스크
 ratio, p, b, poly = worst
 im = draw_polys(cv2.imread(str(p)), [poly], (0, 255, 0))
 draw_boxes(im, [b], (0, 0, 255), thick=2)
 fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-axes[0].hist(ratios, bins=30, color='tab:blue'); axes[0].axvline(1.5, ls='--', c='gray')
+axes[0].hist(ratios, bins=30, color='tab:blue'); axes[0].axvline(1.5, ls='--', c='gray')  # 비율 분포 + 1.5배 기준선
 axes[0].set_xlabel('box area / mask area'); axes[0].set_ylabel('count')
-axes[1].imshow(im[..., ::-1]); axes[1].axis('off')
+axes[1].imshow(im[..., ::-1]); axes[1].axis('off')  # BGR→RGB로 뒤집어 표시
 axes[1].set_title(f'largest gap: box is {ratio:.1f}x the mask (red = box, green = mask)', fontsize=9)
 plt.tight_layout(); plt.show()
 ```
@@ -527,48 +551,51 @@ QUICK_RUN 검증 실행 예시: `예측 756개 | 박스/마스크 면적비 중�
 ### 셀 15. TP·FP·FN을 직접 세어 임계값별 Precision·Recall·F1 표를 만듭니다
 
 ```python
+# box_iou: 박스 a (N,4), b (M,4) → 모든 짝의 IoU (N,M) 행렬
 def box_iou(a, b):
     """a: (N,4), b: (M,4) → (N,M) IoU 행렬"""
     if len(a) == 0 or len(b) == 0:
         return np.zeros((len(a), len(b)))
-    x1 = np.maximum(a[:, None, 0], b[None, :, 0]); y1 = np.maximum(a[:, None, 1], b[None, :, 1])
-    x2 = np.minimum(a[:, None, 2], b[None, :, 2]); y2 = np.minimum(a[:, None, 3], b[None, :, 3])
-    inter = np.clip(x2 - x1, 0, None) * np.clip(y2 - y1, 0, None)
+    x1 = np.maximum(a[:, None, 0], b[None, :, 0]); y1 = np.maximum(a[:, None, 1], b[None, :, 1])  # 겹친 영역 좌상단
+    x2 = np.minimum(a[:, None, 2], b[None, :, 2]); y2 = np.minimum(a[:, None, 3], b[None, :, 3])  # 겹친 영역 우하단
+    inter = np.clip(x2 - x1, 0, None) * np.clip(y2 - y1, 0, None)  # np.clip: 음수(안 겹침)는 0으로
     area_a = (a[:, 2] - a[:, 0]) * (a[:, 3] - a[:, 1]); area_b = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
-    return inter / (area_a[:, None] + area_b[None, :] - inter + 1e-9)
+    return inter / (area_a[:, None] + area_b[None, :] - inter + 1e-9)  # 겹친 넓이 ÷ 합친 넓이, 1e-9는 0 나눗셈 방지
 
+# pred (N,5) [x1,y1,x2,y2,conf], gt (M,4) → TP·FP·FN 개수와 예측별 정답 여부
 def match(pred, gt, iou_thr=0.5):
     """신뢰도 높은 예측부터 정답과 1:1로 짝짓기 → (TP, FP, FN, 맞은 예측 여부)"""
-    order = np.argsort(-pred[:, 4]) if len(pred) else []
+    order = np.argsort(-pred[:, 4]) if len(pred) else []  # 신뢰도 높은 순서의 인덱스
     ious = box_iou(pred[:, :4], gt) if len(pred) else np.zeros((0, len(gt)))
-    used, hit = set(), np.zeros(len(pred), bool)
+    used, hit = set(), np.zeros(len(pred), bool)  # 이미 짝지은 정답 번호, 예측별 맞음 여부
     for i in order:
         if len(gt) == 0:
             break
-        j = int(np.argmax(np.where([k in used for k in range(len(gt))], -1, ious[i])))
-        if ious[i, j] >= iou_thr and j not in used:
+        j = int(np.argmax(np.where([k in used for k in range(len(gt))], -1, ious[i])))  # 쓴 정답은 -1로 가리고 IoU 최대인 정답
+        if ious[i, j] >= iou_thr and j not in used:  # IoU 0.5 이상이면 TP (정답 1개당 1번만)
             used.add(j); hit[i] = True
     tp = int(hit.sum())
-    return tp, len(pred) - tp, len(gt) - tp, hit
+    return tp, len(pred) - tp, len(gt) - tp, hit  # FP = 예측 - TP, FN = 정답 - TP
 
 # 예측은 낮은 임계값(0.05)으로 한 번만 수행해 저장
 cache = []
 for p in VAL_IMAGES:
     r = best_model(str(p), conf=0.05, imgsz=CFG['imgsz'], verbose=False)[0]
-    pred = np.hstack([r.boxes.xyxy.cpu().numpy(), r.boxes.conf.cpu().numpy()[:, None]])
-    cache.append((p, pred, read_gt(p)[0]))
+    pred = np.hstack([r.boxes.xyxy.cpu().numpy(), r.boxes.conf.cpu().numpy()[:, None]])  # 박스 4열 + 신뢰도 1열 = (N,5)
+    cache.append((p, pred, read_gt(p)[0]))  # (경로, 예측, 정답 박스) 저장 — 모델 재실행 불필요
 
+# 임계값 6개마다 전체 TP·FP·FN을 합산해 precision·recall·F1 계산
 rows = []
 for thr in [0.1, 0.25, 0.4, 0.55, 0.7, 0.85]:
     tp = fp = fn = 0
     for _, pred, gt in cache:
-        t, f, n, _ = match(pred[pred[:, 4] >= thr], gt)
+        t, f, n, _ = match(pred[pred[:, 4] >= thr], gt)  # 신뢰도 thr 이상인 예측만 남겨 매칭
         tp += t; fp += f; fn += n
-    prec, rec = tp / max(tp + fp, 1), tp / max(tp + fn, 1)
+    prec, rec = tp / max(tp + fp, 1), tp / max(tp + fn, 1)  # max(..., 1): 분모 0 방지
     rows.append({'conf': thr, 'tp': tp, 'fp': fp, 'fn': fn, 'precision': round(prec, 3),
                  'recall': round(rec, 3), 'f1': round(2 * prec * rec / max(prec + rec, 1e-9), 3)})
 thr_table = pd.DataFrame(rows)
-BEST_CONF = float(thr_table.loc[thr_table['f1'].idxmax(), 'conf'])
+BEST_CONF = float(thr_table.loc[thr_table['f1'].idxmax(), 'conf'])  # F1이 가장 큰 줄의 conf 값
 print('F1이 가장 높은 임계값:', BEST_CONF)
 thr_table
 ```
@@ -592,12 +619,13 @@ QUICK_RUN 검증 실행 예시: `F1이 가장 높은 임계값: 0.55`가 출력�
 ### 셀 16. 임계값에 따른 Precision·Recall·F1 변화를 그래프로 그립니다
 
 ```python
+# 임계값(x축)에 따른 precision·recall·F1 변화
 plt.figure(figsize=(7, 3.5))
 plt.plot(thr_table['conf'], thr_table['precision'], '-o', label='precision')
 plt.plot(thr_table['conf'], thr_table['recall'], '-o', label='recall')
 plt.plot(thr_table['conf'], thr_table['f1'], '-o', label='f1')
-plt.axvline(BEST_CONF, ls='--', c='gray')
-plt.xlabel('confidence threshold'); plt.ylim(0, 1.05); plt.grid(alpha=.3); plt.legend(); plt.show()
+plt.axvline(BEST_CONF, ls='--', c='gray')  # 선택한 임계값 위치에 점선
+plt.xlabel('confidence threshold'); plt.ylim(0, 1.05); plt.grid(alpha=.3); plt.legend(); plt.show()  # 세로축 0~1 고정
 ```
 
 **코드 설명**
@@ -615,22 +643,24 @@ plt.xlabel('confidence threshold'); plt.ylim(0, 1.05); plt.grid(alpha=.3); plt.l
 ### 셀 17. 틀린 개수가 가장 많은 이미지 4장을 골라 오류를 직접 봅니다
 
 ```python
+# 이미지마다 BEST_CONF 기준 오류 수(FP + FN)를 세어 많은 순으로 정렬
 err_rows = []
 for p, pred, gt in cache:
-    pr = pred[pred[:, 4] >= BEST_CONF]
+    pr = pred[pred[:, 4] >= BEST_CONF]  # 선택한 임계값 이상인 예측만
     tp, fp, fn, hit = match(pr, gt)
     err_rows.append((fp + fn, fp, fn, p, pr, gt, hit))
-err_rows.sort(key=lambda x: -x[0])
+err_rows.sort(key=lambda x: -x[0])  # 오류 개수 내림차순
 
+# 오류가 가장 많은 4장: 초록 = 정답, 파랑 = 맞은 예측, 빨강 = FP
 imgs, titles = [], []
 for err, fp, fn, p, pr, gt, hit in err_rows[:4]:
     im = cv2.imread(str(p))
     draw_boxes(im, gt, (0, 255, 0), thick=3)
-    draw_boxes(im, pr[hit], (255, 128, 0))
-    draw_boxes(im, pr[~hit], (0, 0, 255), 'FP')
+    draw_boxes(im, pr[hit], (255, 128, 0))  # hit=True인 예측 (BGR 파랑)
+    draw_boxes(im, pr[~hit], (0, 0, 255), 'FP')  # ~hit: 맞지 않은 예측 = FP (빨강)
     imgs.append(im); titles.append(f'FP {fp} / FN {fn} | {p.name[:28]}')
 show_grid(imgs, titles)
-print('오류가 하나도 없는 이미지 비율:', round(np.mean([e[0] == 0 for e in err_rows]), 3))
+print('오류가 하나도 없는 이미지 비율:', round(np.mean([e[0] == 0 for e in err_rows]), 3))  # True 비율 = 평균
 ```
 
 **코드 설명**
@@ -652,14 +682,16 @@ QUICK_RUN 검증 실행 예시: 4장이 제목 `FP n / FN n | 파일 이름`과 
 ### 셀 18. 개선 실험(선택)을 실행하고 실험별 성능 비교 표를 저장합니다
 
 ```python
-RUN_EXPERIMENT = False
+RUN_EXPERIMENT = False  # True: 개선안 2개 추가 학습 (T4 기준 약 40분 추가)
 
+# 한 번에 하나만 바꾼 개선안 — epoch 2배 / 모델 크기 n→s
 EXPERIMENTS = [
     {'exp_name': 'more_epochs', 'model': 'yolo26n-seg.pt', 'epochs': CFG['epochs'] * 2, 'imgsz': CFG['imgsz']},
     {'exp_name': 'bigger_model', 'model': 'yolo26s-seg.pt', 'epochs': CFG['epochs'], 'imgsz': CFG['imgsz']},
 ]
-METRIC_KEYS = ['box_map50', 'box_map50_95', 'mask_map50', 'mask_map50_95']
+METRIC_KEYS = ['box_map50', 'box_map50_95', 'mask_map50', 'mask_map50_95']  # 비교할 지표 이름
 
+# 첫 줄 = 2-2에서 학습한 기준 모델 (설정 + val 지표 + 학습 시간)
 exp_rows = [{'exp_name': 'baseline', 'model': 'yolo26n-seg.pt', 'epochs': CFG['epochs'], 'imgsz': CFG['imgsz'],
              **{k: val_row[k] for k in METRIC_KEYS}, 'train_min': round(TRAIN_MIN, 1)}]
 
@@ -668,12 +700,12 @@ if RUN_EXPERIMENT:
         m = YOLO(e['model']); t0 = time.time()
         m.train(data='package-seg.yaml', epochs=e['epochs'], imgsz=e['imgsz'], batch=CFG['batch'],
                 project='runs_box', name=e['exp_name'], exist_ok=True, seed=0, verbose=False)
-        mins = (time.time() - t0) / 60
-        _, row = evaluate(YOLO(Path(m.trainer.save_dir) / 'weights' / 'best.pt'), 'val')
-        exp_rows.append({**e, **{k: row[k] for k in METRIC_KEYS}, 'train_min': round(mins, 1)})
+        mins = (time.time() - t0) / 60  # 실험별 학습 시간(분)
+        _, row = evaluate(YOLO(Path(m.trainer.save_dir) / 'weights' / 'best.pt'), 'val')  # 실험 모델의 최고 가중치로 val 평가
+        exp_rows.append({**e, **{k: row[k] for k in METRIC_KEYS}, 'train_min': round(mins, 1)})  # 설정 + 지표를 한 줄로 합침
 
 exp_table = pd.DataFrame(exp_rows)
-exp_table.to_csv('experiments.csv', index=False); save_out('experiments.csv')
+exp_table.to_csv('experiments.csv', index=False); save_out('experiments.csv')  # CSV 저장 + Drive 복사
 exp_table
 ```
 
@@ -706,33 +738,34 @@ exp_table
 ### 셀 19. 연속 프레임을 이어 붙여 실습용 컨베이어 영상(conveyor_clip.mp4)을 만듭니다
 
 ```python
+# build_conveyor_clip: frame_1~307 이미지를 이어 영상 생성 → (파일명, 프레임 수, fps, (폭, 높이))
 def build_conveyor_clip(root, out='conveyor_clip.mp4', first=1, last=307, fps=15, panel='right'):
-    by_num = defaultdict(list)
+    by_num = defaultdict(list)  # 프레임 번호 → 같은 번호 파일들(원본+변형 사본)
     for f in glob.glob(str(root / 'images' / '*' / 'frame_*_jpg*')):
-        n = int(re.search(r'frame_(\d+)_jpg', f).group(1))
+        n = int(re.search(r'frame_(\d+)_jpg', f).group(1))  # 파일 이름에서 프레임 번호 추출
         if first <= n <= last:
             by_num[n].append(f)
     nums = sorted(by_num)
-    load = lambda f: cv2.imread(f).astype(np.float32)
+    load = lambda f: cv2.imread(f).astype(np.float32)  # 픽셀 차이 계산용 실수형 읽기
     anchor = next(n for n in nums if '/train/' not in by_num[n][0])   # 변형이 없는 val/test 프레임에서 출발
-    chosen = {anchor: by_num[anchor][0]}
+    chosen = {anchor: by_num[anchor][0]}  # 프레임 번호 → 고른 파일
     a = nums.index(anchor)
     for seq in (nums[a + 1:], nums[:a][::-1]):                         # 앞쪽·뒤쪽으로 이어 가며 선택
         prev = load(chosen[anchor])
         for n in seq:
-            diffs = [np.abs(load(c) - prev).mean() for c in by_num[n]]
-            chosen[n] = by_num[n][int(np.argmin(diffs))]
+            diffs = [np.abs(load(c) - prev).mean() for c in by_num[n]]  # 직전 프레임과의 평균 픽셀 차이
+            chosen[n] = by_num[n][int(np.argmin(diffs))]  # 차이가 가장 작은 사본 선택
             prev = load(chosen[n])
-    crop = lambda im: im[:, im.shape[1] // 2:] if panel == 'right' else im[:, :im.shape[1] // 2]
+    crop = lambda im: im[:, im.shape[1] // 2:] if panel == 'right' else im[:, :im.shape[1] // 2]  # 폭 절반 기준 오른쪽/왼쪽 화면만
     h, w = crop(cv2.imread(chosen[nums[0]])).shape[:2]
-    writer = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+    writer = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))  # mp4v 코덱, 초당 fps장
     for n in nums:
-        writer.write(np.ascontiguousarray(crop(cv2.imread(chosen[n]))))
+        writer.write(np.ascontiguousarray(crop(cv2.imread(chosen[n]))))  # 잘라 낸 배열을 메모리상 연속으로 만들어 기록
     writer.release()
     return out, len(nums), fps, (w, h)
 
 CLIP, n_frames, CLIP_FPS, (W, H) = build_conveyor_clip(DATA_ROOT)
-save_out(CLIP)
+save_out(CLIP)  # Drive에도 복사 (통합 실습에서 사용)
 print(f'{CLIP}: {n_frames}프레임, {CLIP_FPS}fps, {W}x{H}, 약 {n_frames / CLIP_FPS:.1f}초')
 show_video(CLIP)
 ```
@@ -757,6 +790,7 @@ show_video(CLIP)
 ### 셀 20. 프레임별 탐지 수를 모두 더해 '탐지만으로는 셀 수 없음'을 확인합니다
 
 ```python
+# stream=True: 프레임별 결과를 하나씩 꺼냄 (메모리 절약) / len(r.boxes): 그 프레임 탐지 수
 per_frame = [len(r.boxes) for r in best_model(CLIP, stream=True, conf=BEST_CONF, imgsz=CFG['imgsz'], verbose=False)]
 print('프레임별 탐지 수 합계:', sum(per_frame), '| 프레임당 평균:', round(np.mean(per_frame), 2))
 ```
@@ -774,36 +808,41 @@ print('프레임별 탐지 수 합계:', sum(per_frame), '| 프레임당 평균:
 ### 셀 21. ByteTrack으로 트래킹해 ID와 이동 궤적을 그린 영상(tracked.mp4)을 만듭니다
 
 ```python
+# id_color: ID 번호 → 항상 같은 BGR 색 (ID를 난수 시드로 사용)
 def id_color(tid):
     rng = np.random.default_rng(int(tid))
     return tuple(int(c) for c in rng.integers(60, 255, 3))
 
+# run_tracking: 영상 트래킹 → 결과 영상 저장, ID별 중심점 이력 반환 (trail = 궤적 길이)
 def run_tracking(src, dst='tracked.mp4', tracker='bytetrack.yaml', trail=25):
     writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), CLIP_FPS, (W, H))
     history = defaultdict(list)      # track_id → [(frame, cx, cy), ...]
+    # 영상 전체를 넘기면 트래커가 처음~끝까지 ID 상태를 이어 감
     for i, r in enumerate(best_model.track(src, stream=True, tracker=tracker,
                                            conf=BEST_CONF, imgsz=CFG['imgsz'], verbose=False)):
-        frame = r.orig_img.copy()
-        if r.boxes.id is not None:
+        frame = r.orig_img.copy()  # 원본 프레임 사본 위에 그림
+        if r.boxes.id is not None:  # ID가 아직 안 붙은 프레임은 id가 None
+            # 박스 좌표와 트래킹 ID를 짝지어 하나씩 (GPU 텐서 → 파이썬 값)
             for (x1, y1, x2, y2), tid in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.id.int().cpu().tolist()):
-                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2  # 박스 중심 좌표 (픽셀)
                 history[tid].append((i, cx, cy))
                 col = id_color(tid)
                 cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), col, 2)
                 cv2.putText(frame, f'ID {tid}', (int(x1), int(y1) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2)
-                pts = np.array([(int(x), int(y)) for _, x, y in history[tid][-trail:]], np.int32)
-                cv2.polylines(frame, [pts], False, col, 2)
+                pts = np.array([(int(x), int(y)) for _, x, y in history[tid][-trail:]], np.int32)  # 최근 trail개 중심점
+                cv2.polylines(frame, [pts], False, col, 2)  # 중심점을 이어 이동 궤적 그리기
         writer.write(frame)
     writer.release()
     return history
 
 track_hist = run_tracking(CLIP)
+# ID별 등장 프레임 수, 처음·마지막 프레임, 이동량(dx, dy) 표
 life = pd.DataFrame([{'track_id': t, 'frames': len(h), 'first_frame': h[0][0], 'last_frame': h[-1][0],
                       'dx': round(float(h[-1][1] - h[0][1]), 1), 'dy': round(float(h[-1][2] - h[0][2]), 1)}
                      for t, h in track_hist.items()]).sort_values('first_frame')
 print('부여된 ID 수:', len(life), '| 5프레임 이상 이어진 ID 수:', int((life['frames'] >= 5).sum()))
 show_video('tracked.mp4')
-life.head(10)
+life.head(10)  # 첫 등장 순 앞 10개 ID
 ```
 
 **코드 설명**
@@ -838,12 +877,13 @@ life.head(10)
 
 ```python
 moving = life[(life['frames'] >= 5) & (life['dx'].abs() > W * 0.1)]   # 충분히 오래, 충분히 멀리 움직인 ID만
-main_dir = 'right_to_left' if moving['dx'].median() < 0 else 'left_to_right'
+main_dir = 'right_to_left' if moving['dx'].median() < 0 else 'left_to_right'  # dx 중앙값 음수 = 오른쪽→왼쪽
 print('상자의 주 이동 방향:', main_dir, '| dx 중앙값:', moving['dx'].median())
 
+# 0.5 → 0.3이면 선이 왼쪽으로 이동, Step 4·5 카운트와 size_rules.json에 반영
 LINE_X = int(W * 0.5)    # 화면 가운데에 세로 기준선 (필요하면 비율을 바꿔 보세요)
-cap = cv2.VideoCapture(CLIP); cap.set(cv2.CAP_PROP_POS_FRAMES, 100); _, preview = cap.read(); cap.release()
-cv2.line(preview, (LINE_X, 0), (LINE_X, H), (0, 255, 255), 3)
+cap = cv2.VideoCapture(CLIP); cap.set(cv2.CAP_PROP_POS_FRAMES, 100); _, preview = cap.read(); cap.release()  # 100번째 프레임 1장
+cv2.line(preview, (LINE_X, 0), (LINE_X, H), (0, 255, 255), 3)  # 노란 세로선 (BGR)
 show_bgr(preview, f'Counting line at x={LINE_X}', size=(4, 7))
 ```
 
@@ -864,30 +904,32 @@ show_bgr(preview, f'Counting line at x={LINE_X}', size=(4, 7))
 ### 셀 23. 기준선 통과를 세어 카운트 영상(counting.mp4)과 통과 기록 CSV를 만듭니다
 
 ```python
+# run_counting: 영상 트래킹 + 기준선 통과 카운트 → 결과 영상 저장, 통과 기록 DataFrame 반환
 def run_counting(src, dst='counting.mp4', line_x=LINE_X, tracker='bytetrack.yaml'):
     writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), CLIP_FPS, (W, H))
-    last_x, counted, log = {}, {}, []
+    last_x, counted, log = {}, {}, []  # ID별 직전 중심 x, 센 ID→방향, 통과 기록
     for i, r in enumerate(best_model.track(src, stream=True, tracker=tracker,
                                            conf=BEST_CONF, imgsz=CFG['imgsz'], verbose=False)):
         frame = r.orig_img.copy()
         if r.boxes.id is not None:
             for (x1, y1, x2, y2), tid in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.id.int().cpu().tolist()):
-                cx = (x1 + x2) / 2
+                cx = (x1 + x2) / 2  # 박스 중심 x좌표 (픽셀)
                 prev = last_x.get(tid)
-                if prev is not None and tid not in counted:
-                    if prev < line_x <= cx:
+                if prev is not None and tid not in counted:  # 직전 위치가 있고 아직 안 센 ID만 → ID당 1번
+                    if prev < line_x <= cx:  # 직전엔 선 왼쪽, 지금은 선 위/오른쪽
                         counted[tid] = 'left_to_right'
-                    elif prev >= line_x > cx:
+                    elif prev >= line_x > cx:  # 직전엔 선 위/오른쪽, 지금은 선 왼쪽
                         counted[tid] = 'right_to_left'
-                    if tid in counted:
+                    if tid in counted:  # 이번 프레임에 방금 셌으면 기록
                         log.append({'frame': i, 'time_s': round(i / CLIP_FPS, 2), 'track_id': tid,
                                     'direction': counted[tid]})
-                last_x[tid] = cx
-                col = (0, 200, 0) if tid in counted else (0, 165, 255)
+                last_x[tid] = cx  # 다음 프레임 비교용으로 현재 위치 저장
+                col = (0, 200, 0) if tid in counted else (0, 165, 255)  # 센 상자 초록, 아직 안 센 상자 주황
                 cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), col, 2)
                 cv2.putText(frame, f'ID {tid}', (int(x1), int(y1) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2)
         flash = log and log[-1]['frame'] >= i - 2          # 방금 카운트되면 선을 잠깐 빨갛게
         cv2.line(frame, (line_x, 0), (line_x, H), (0, 0, 255) if flash else (0, 255, 255), 3)
+        # 왼쪽 위 검은 상자(-1 = 속 채우기)에 누적 카운트 표시
         cv2.rectangle(frame, (8, 8), (200, 48), (0, 0, 0), -1)
         cv2.putText(frame, f'COUNT: {len(counted)}', (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
         writer.write(frame)
@@ -895,7 +937,7 @@ def run_counting(src, dst='counting.mp4', line_x=LINE_X, tracker='bytetrack.yaml
     return pd.DataFrame(log, columns=['frame', 'time_s', 'track_id', 'direction'])
 
 count_log = run_counting(CLIP)
-count_log.to_csv('box_count_log.csv', index=False); save_out('box_count_log.csv')
+count_log.to_csv('box_count_log.csv', index=False); save_out('box_count_log.csv')  # CSV 저장 + Drive 복사
 print('통과한 상자 수:', len(count_log))
 show_video('counting.mp4')
 count_log
@@ -933,25 +975,28 @@ count_log
 ### 셀 24. 마스크 측정 함수를 만들고 영상 한 프레임에서 확인합니다
 
 ```python
+# measure_mask: 윤곽선 (N,2) → 면적, 긴 변, 짧은 변, 회전 사각형 꼭짓점 4개
 def measure_mask(poly):
     """마스크 윤곽선 (N,2) → (면적, 긴 변, 짧은 변, 회전 사각형 꼭짓점)"""
     pts = np.asarray(poly, np.float32)
-    area = float(cv2.contourArea(pts))
-    rect = cv2.minAreaRect(pts)
-    (w_, h_) = rect[1]
-    return area, float(max(w_, h_)), float(min(w_, h_)), cv2.boxPoints(rect)
+    area = float(cv2.contourArea(pts))  # 윤곽선 내부 면적 (px²)
+    rect = cv2.minAreaRect(pts)  # 가장 작은 회전 사각형 ((중심), (폭, 높이), 각도)
+    (w_, h_) = rect[1]  # 회전 사각형의 폭·높이
+    return area, float(max(w_, h_)), float(min(w_, h_)), cv2.boxPoints(rect)  # 큰 값=긴 변, 작은 값=짧은 변
 
 # 영상의 한 프레임에서 확인
 cap = cv2.VideoCapture(CLIP); cap.set(cv2.CAP_PROP_POS_FRAMES, 100); _, frame = cap.read(); cap.release()
-r = best_model(frame, conf=BEST_CONF, imgsz=CFG['imgsz'], verbose=False)[0]
+r = best_model(frame, conf=BEST_CONF, imgsz=CFG['imgsz'], verbose=False)[0]  # 프레임 1장 추론
 vis = frame.copy()
+# 탐지가 없으면 masks가 None → 빈 목록으로 대신
 for b, poly in zip(r.boxes.xyxy.cpu().numpy(), r.masks.xy if r.masks is not None else []):
     if len(poly) < 3:
         continue
     area, long_px, short_px, corners = measure_mask(poly)
     vis = draw_polys(vis, [poly], (0, 255, 0))
-    cv2.polylines(vis, [corners.astype(np.int32)], True, (255, 0, 255), 2)
+    cv2.polylines(vis, [corners.astype(np.int32)], True, (255, 0, 255), 2)  # 회전 사각형 (자홍색)
     draw_boxes(vis, [b], (0, 0, 255), thick=1)
+    # 박스 위에 면적과 '긴 변x짧은 변' 표시
     cv2.putText(vis, f'{area:.0f}px2', (int(b[0]), int(b[1]) - 22), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
     cv2.putText(vis, f'{long_px:.0f}x{short_px:.0f}', (int(b[0]), int(b[1]) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 show_bgr(vis, 'green = mask, magenta = rotated rect, red = box', size=(4, 7))
@@ -976,11 +1021,12 @@ show_bgr(vis, 'green = mask, magenta = rotated rect, red = box', size=(4, 7))
 ### 셀 25. 정답 라벨 면적 분포로 S/M/L 경계를 정하고 size_rules.json으로 저장합니다
 
 ```python
+# 키우면 가장자리 판정이 넓어져 제외되는 상자가 늘어남
 EDGE = 4   # 이 픽셀 안쪽으로 가장자리에 닿으면 '잘린 상자'로 봅니다
 
 label_rows = []
-for split in ['val', 'test']:
-    for img_path in (DATA_ROOT / 'images' / split).glob('frame_*.jpg'):
+for split in ['val', 'test']:  # 변형이 없는 val/test 라벨만 (train 사본은 회전·확대 변형)
+    for img_path in (DATA_ROOT / 'images' / split).glob('frame_*.jpg'):  # 같은 카메라 프레임만
         _, polys = read_gt(img_path)
         for poly in polys:
             xs, ys = poly[:, 0] - 320, poly[:, 1]          # 오른쪽 화면 기준 좌표 (영상과 같은 좌표계)
@@ -988,18 +1034,20 @@ for split in ['val', 'test']:
                 continue                                    # 왼쪽 화면 상자이거나 가장자리에 잘린 상자
             area, long_px, short_px, _ = measure_mask(np.stack([xs, ys], 1))
             label_rows.append({'image': img_path.name, 'area_px': area, 'long_px': long_px, 'short_px': short_px})
-label_sizes = pd.DataFrame(label_rows)
+label_sizes = pd.DataFrame(label_rows)  # 라벨 상자별 면적·긴 변·짧은 변 표
 
-q33, q67 = np.percentile(label_sizes['area_px'], [33.3, 66.7])
+q33, q67 = np.percentile(label_sizes['area_px'], [33.3, 66.7])  # 하위 1/3, 상위 1/3 경계값
+# S 상한, M 상한과 측정 조건을 한 딕셔너리로 → 통합 실습도 같은 기준 사용
 SIZE_RULES = {'measure': 'mask_area_px', 'small_max': round(float(q33)), 'medium_max': round(float(q67)),
               'edge_margin_px': EDGE, 'line_x': LINE_X, 'conf': BEST_CONF, 'imgsz': CFG['imgsz']}
-json.dump(SIZE_RULES, open('size_rules.json', 'w'), indent=2); save_out('size_rules.json')
+json.dump(SIZE_RULES, open('size_rules.json', 'w'), indent=2); save_out('size_rules.json')  # JSON 파일로 저장 + Drive 복사
 print(f'라벨 상자 {len(label_sizes)}개로 기준을 정했습니다:', SIZE_RULES)
 
+# 면적 분포 히스토그램과 S|M, M|L 경계선
 plt.figure(figsize=(8, 3.2))
 plt.hist(label_sizes['area_px'], bins=40, color='tab:gray')
 for v, name in [(q33, 'S | M'), (q67, 'M | L')]:
-    plt.axvline(v, c='red', ls='--'); plt.text(v, plt.ylim()[1] * 0.9, f' {name}\n {v:.0f}', color='red')
+    plt.axvline(v, c='red', ls='--'); plt.text(v, plt.ylim()[1] * 0.9, f' {name}\n {v:.0f}', color='red')  # 경계선 + 위쪽에 값 표시
 plt.xlabel('mask area (px^2)'); plt.ylabel('labels'); plt.title('Package size distribution (ground truth)')
 plt.show()
 ```
@@ -1024,6 +1072,7 @@ QUICK_RUN 검증 실행 예시: `라벨 상자 264개로 기준을 정했습니�
 ### 셀 26. 면적을 S/M/L로 바꾸는 함수와 크기별 색을 정합니다
 
 ```python
+# size_class: 면적 → 'S'(small_max 이하) / 'M'(medium_max 이하) / 'L'
 def size_class(area, rules=SIZE_RULES):
     if area <= rules['small_max']:
         return 'S'
@@ -1032,7 +1081,7 @@ def size_class(area, rules=SIZE_RULES):
     return 'L'
 
 SIZE_COLOR = {'S': (255, 200, 0), 'M': (0, 200, 255), 'L': (60, 60, 255)}   # BGR: 하늘색, 주황, 빨강
-print([size_class(a) for a in [1000, 5000, 15000]])
+print([size_class(a) for a in [1000, 5000, 15000]])  # 경계 아래·사이·위 값으로 동작 확인
 ```
 
 **코드 설명**
@@ -1048,27 +1097,29 @@ print([size_class(a) for a in [1000, 5000, 15000]])
 ### 셀 27. 트래킹을 한 번 돌리며 프레임·상자별 위치와 크기를 관측 표로 기록합니다
 
 ```python
+# collect_observations: 영상 1회 트래킹 → (관측 표, (프레임, ID)→윤곽선 딕셔너리)
 def collect_observations(src, tracker='bytetrack.yaml'):
     obs, polys = [], {}
     for i, r in enumerate(best_model.track(src, stream=True, tracker=tracker,
                                            conf=BEST_CONF, imgsz=CFG['imgsz'], verbose=False)):
-        if r.boxes.id is None or r.masks is None:
+        if r.boxes.id is None or r.masks is None:  # ID나 마스크가 없는 프레임은 건너뜀
             continue
-        for b, tid, poly in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.id.int().cpu().tolist(), r.masks.xy):
+        for b, tid, poly in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.id.int().cpu().tolist(), r.masks.xy):  # 박스·ID·윤곽선을 같은 순서로
             if len(poly) < 3:
                 continue
-            area, long_px, short_px, _ = measure_mask(poly)
+            area, long_px, short_px, _ = measure_mask(poly)  # 이 관측의 크기
             x1, y1, x2, y2 = b
+            # 관측 1줄 — at_edge: 박스가 화면 가장자리에 닿았는지 (크기 결정에서 제외)
             obs.append({'frame': i, 'track_id': tid, 'cx': (x1 + x2) / 2, 'cy': (y1 + y2) / 2,
                         'area_px': area, 'long_px': long_px, 'short_px': short_px,
                         'at_edge': bool(x1 < EDGE or y1 < EDGE or x2 > W - EDGE or y2 > H - EDGE)})
-            polys[(i, tid)] = poly
+            polys[(i, tid)] = poly  # 5-5 영상 다시 그리기용
     return pd.DataFrame(obs), polys
 
 obs, obs_polys = collect_observations(CLIP)
 print('관측 행 수:', len(obs), '| 트랙 수:', obs['track_id'].nunique(),
       '| 가장자리에 걸린 관측 비율:', round(obs['at_edge'].mean(), 2))
-obs.round(1).head()
+obs.round(1).head()  # 소수점 1자리, 앞 5줄
 ```
 
 **코드 설명**
@@ -1088,11 +1139,11 @@ obs.round(1).head()
 
 ```python
 # 한 상자의 면적이 시간에 따라 어떻게 재지는지 확인
-tid_example = obs.groupby('track_id').size().idxmax()
-one = obs[obs['track_id'] == tid_example]
+tid_example = obs.groupby('track_id').size().idxmax()  # groupby: ID별로 묶어 관측 수 → 가장 많은 ID
+one = obs[obs['track_id'] == tid_example]  # 그 ID의 관측만
 plt.figure(figsize=(8, 3))
 plt.plot(one['frame'], one['area_px'], '-', c='gray', lw=1)
-plt.scatter(one['frame'], one['area_px'], c=np.where(one['at_edge'], 'red', 'tab:blue'), s=12)
+plt.scatter(one['frame'], one['area_px'], c=np.where(one['at_edge'], 'red', 'tab:blue'), s=12)  # 가장자리=빨강, 나머지=파랑
 plt.xlabel('frame'); plt.ylabel('mask area (px^2)')
 plt.title(f'track {tid_example}: red = touching frame edge (excluded)')
 plt.grid(alpha=.3); plt.show()
@@ -1113,18 +1164,20 @@ plt.grid(alpha=.3); plt.show()
 ### 셀 29. 트랙별로 통과 시점과 크기를 확정해 크기별 통과 수를 집계합니다
 
 ```python
+# summarize_tracks: 관측 표 → 기준선을 넘은 트랙별 통과 시점·방향·크기 표 (모델 재실행 없음)
 def summarize_tracks(obs, line_x=LINE_X, fps=CLIP_FPS, rules=SIZE_RULES):
     rows = []
-    for tid, g in obs.sort_values('frame').groupby('track_id'):
-        prev = g['cx'].shift()
+    for tid, g in obs.sort_values('frame').groupby('track_id'):  # 프레임 순 정렬 후 ID별로 묶음 (g = 한 ID의 관측)
+        prev = g['cx'].shift()  # 바로 앞 관측의 중심 x를 같은 줄에
+        # 앞·현재 관측이 선의 양쪽이면 통과 (&가 |보다 먼저 계산)
         crossed = g[(prev < line_x) & (g['cx'] >= line_x) | (prev >= line_x) & (g['cx'] < line_x)]
         if crossed.empty:
             continue                                     # 기준선을 넘지 않은 트랙은 집계하지 않음
-        first = crossed.iloc[0]
+        first = crossed.iloc[0]  # 처음 넘은 관측
         direction = 'left_to_right' if first['cx'] >= line_x else 'right_to_left'
-        full = g[~g['at_edge']]
+        full = g[~g['at_edge']]  # 가장자리에 걸리지 않은 관측만
         use = full if len(full) >= 3 else g             # 온전한 관측이 3개 미만이면 전체 사용
-        area = float(use['area_px'].median())
+        area = float(use['area_px'].median())  # 중앙값 — 순간적으로 튀는 값에 강함
         rows.append({'track_id': tid, 'cross_frame': int(first['frame']),
                      'time_s': round(first['frame'] / fps, 2), 'direction': direction,
                      'size_class': size_class(area, rules), 'area_px': round(area),
@@ -1138,7 +1191,7 @@ def summarize_tracks(obs, line_x=LINE_X, fps=CLIP_FPS, rules=SIZE_RULES):
 size_log = summarize_tracks(obs)
 size_log.to_csv('box_size_log.csv', index=False); save_out('box_size_log.csv')
 
-size_counts = size_log['size_class'].value_counts().reindex(['S', 'M', 'L'], fill_value=0)
+size_counts = size_log['size_class'].value_counts().reindex(['S', 'M', 'L'], fill_value=0)  # S/M/L 순서, 없는 등급은 0
 print('크기별 통과 수:', size_counts.to_dict(), '| 합계:', int(size_counts.sum()))
 print('Step 4 카운트와 같은가:', int(size_counts.sum()) == len(count_log))
 size_log
@@ -1164,17 +1217,18 @@ size_log
 ### 셀 30. 관측 표와 집계 결과로 크기별 색과 S/M/L 카운터가 있는 영상을 만듭니다
 
 ```python
+# render_size_video: 저장된 윤곽선·집계로 영상을 다시 그려 dst에 저장, 파일명 반환 (모델 재실행 없음)
 def render_size_video(src, obs_polys, size_log, dst='size_counting.mp4', line_x=LINE_X):
-    cls_of = dict(zip(size_log['track_id'], size_log['size_class']))
-    cross_at = dict(zip(size_log['track_id'], size_log['cross_frame']))
-    by_frame = defaultdict(list)
+    cls_of = dict(zip(size_log['track_id'], size_log['size_class']))  # ID → 크기 등급
+    cross_at = dict(zip(size_log['track_id'], size_log['cross_frame']))  # ID → 기준선 통과 프레임
+    by_frame = defaultdict(list)  # 프레임 번호 → [(ID, 윤곽선), ...]
     for (i, tid), poly in obs_polys.items():
         by_frame[i].append((tid, poly))
     cap = cv2.VideoCapture(src)
     writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), CLIP_FPS, (W, H))
     i = 0
     while True:
-        ok, frame = cap.read()
+        ok, frame = cap.read()  # ok=False면 영상 끝
         if not ok:
             break
         overlay = frame.copy()
@@ -1185,9 +1239,10 @@ def render_size_video(src, obs_polys, size_log, dst='size_counting.mp4', line_x=
             x, y = poly[:, 0].min(), poly[:, 1].min()
             label = f'{c} #{tid}' if c else f'#{tid}'
             cv2.putText(frame, label, (int(x), int(max(14, y - 4))), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
-        frame = cv2.addWeighted(overlay, 0.45, frame, 0.55, 0)
+        frame = cv2.addWeighted(overlay, 0.45, frame, 0.55, 0)  # 칠한 사본 45% + 원본 55% → 반투명
         cv2.line(frame, (line_x, 0), (line_x, H), (0, 255, 255), 2)
-        done = [cls_of[t] for t, f in cross_at.items() if f <= i]
+        done = [cls_of[t] for t, f in cross_at.items() if f <= i]  # 현재 프레임까지 선을 넘은 상자들의 등급
+        # 위쪽 검은 띠에 'S:n M:n L:n =합계' 표시
         cv2.rectangle(frame, (6, 6), (W - 6, 40), (0, 0, 0), -1)
         for k, s in enumerate(['S', 'M', 'L']):
             cv2.putText(frame, f'{s}:{done.count(s)}', (14 + k * 72, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, SIZE_COLOR[s], 2)
@@ -1198,7 +1253,7 @@ def render_size_video(src, obs_polys, size_log, dst='size_counting.mp4', line_x=
     return dst
 
 render_size_video(CLIP, obs_polys, size_log)
-save_out('size_counting.mp4')
+save_out('size_counting.mp4')  # Drive에도 복사
 show_video('size_counting.mp4')
 ```
 
@@ -1219,16 +1274,17 @@ show_video('size_counting.mp4')
 
 ```python
 fig, axes = plt.subplots(1, 2, figsize=(11, 3.4), gridspec_kw={'width_ratios': [1, 2]})
-bar_colors = ['#00c8ff', '#ffc800', '#ff3c3c']
+bar_colors = ['#00c8ff', '#ffc800', '#ff3c3c']  # SIZE_COLOR와 같은 색 (matplotlib은 RGB 순서)
 axes[0].bar(['S', 'M', 'L'], size_counts.values, color=bar_colors)
 axes[0].set_title('Packages by size'); axes[0].set_ylabel('count')
 for s, c in zip(['S', 'M', 'L'], bar_colors):
     d = size_log[size_log['size_class'] == s]
-    axes[1].scatter(d['time_s'], d['area_px'], s=60, color=c, label=s, edgecolor='k')
-axes[1].axhline(SIZE_RULES['small_max'], ls='--', c='gray', lw=1)
-axes[1].axhline(SIZE_RULES['medium_max'], ls='--', c='gray', lw=1)
+    axes[1].scatter(d['time_s'], d['area_px'], s=60, color=c, label=s, edgecolor='k')  # 상자별 통과 시각(x)과 면적(y)
+axes[1].axhline(SIZE_RULES['small_max'], ls='--', c='gray', lw=1)  # S|M 경계
+axes[1].axhline(SIZE_RULES['medium_max'], ls='--', c='gray', lw=1)  # M|L 경계
 axes[1].set_xlabel('time crossing the line (s)'); axes[1].set_ylabel('mask area (px^2)')
 axes[1].set_title('Each counted package'); axes[1].legend(); axes[1].grid(alpha=.3)
+# show() 뒤에는 그림이 비워지므로 savefig를 먼저
 plt.tight_layout(); plt.savefig('size_summary.png', dpi=120); save_out('size_summary.png'); plt.show()
 ```
 

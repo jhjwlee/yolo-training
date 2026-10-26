@@ -1,6 +1,6 @@
 # YOLO 2회차 실습 B — 상자 들기 동작 분석과 위험 자세 리포트
 
-노트북: [`yolo_day2_pose_lab_v1.1.ipynb`](../yolo_day2_pose_lab_v1.1.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_pose_lab_v1.1.ipynb)
+노트북: [`yolo_day2_pose_lab_v1.2.ipynb`](../yolo_day2_pose_lab_v1.2.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_pose_lab_v1.2.ipynb)
 
 | 항목 | 내용 |
 |---|---|
@@ -56,6 +56,7 @@
 ### 셀 1. ultralytics 라이브러리 설치
 
 ```python
+# YOLO 라이브러리(ultralytics) 설치 — -q: 설치 로그 줄임
 !pip -q install ultralytics
 ```
 
@@ -71,20 +72,23 @@
 ### 셀 2. 라이브러리 불러오기와 GPU 확인
 
 ```python
+# 기본 도구 — 경로, JSON 저장, 파일 복사, 영상 문자열 변환, 외부 명령 실행
 import os, json, shutil, base64, subprocess
 from pathlib import Path
 
+# 영상 처리(OpenCV), 수치 계산, 표, 그래프, 딥러닝(PyTorch)
 import cv2
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import torch
-from IPython.display import HTML, display
-from ultralytics import YOLO
+from IPython.display import HTML, display  # 노트북 안에 영상·표 표시
+from ultralytics import YOLO  # YOLO 모델 클래스
 
+# GPU 확인 — False면 CPU로 실행되어 Step 2가 느려짐
 print('GPU 사용 가능:', torch.cuda.is_available())
 if torch.cuda.is_available():
-    print('GPU:', torch.cuda.get_device_name(0))
+    print('GPU:', torch.cuda.get_device_name(0))  # 예: Tesla T4
 ```
 
 **코드 설명**
@@ -105,8 +109,9 @@ T4 GPU 런타임이면 'GPU 사용 가능: True'와 GPU 이름이 출력됩니�
 
 ```python
 # 결과 저장 위치 — Google Drive를 연결하면 런타임이 끊겨도 결과가 남습니다
-USE_DRIVE = True
+USE_DRIVE = True  # ✏️ False면 Colab 임시 폴더에만 저장 (런타임 끊기면 사라짐)
 
+# Colab인지 확인 — google.colab은 Colab에서만 불러올 수 있음
 try:
     from google.colab import drive, files
     IN_COLAB = True
@@ -114,11 +119,11 @@ except ImportError:
     IN_COLAB = False
 
 if IN_COLAB and USE_DRIVE:
-    drive.mount('/content/drive')
+    drive.mount('/content/drive')  # Drive 연결 — 권한 허용 창이 뜸
     SAVE_DIR = Path('/content/drive/MyDrive/yolo_day2')
 else:
-    SAVE_DIR = Path('outputs')
-SAVE_DIR.mkdir(parents=True, exist_ok=True)
+    SAVE_DIR = Path('outputs')  # Colab이 아니면 현재 위치의 outputs 폴더
+SAVE_DIR.mkdir(parents=True, exist_ok=True)  # 폴더가 없으면 만들고, 있으면 그대로 둠
 print('결과 저장 위치:', SAVE_DIR.resolve())
 ```
 
@@ -140,26 +145,29 @@ print('결과 저장 위치:', SAVE_DIR.resolve())
 
 ```python
 # 화면 표시용 도우미 함수
+# show_bgr: OpenCV 이미지(BGR)를 그림으로 표시 — 입력: 이미지, 제목, 크기
 def show_bgr(img, title=None, size=(9, 6)):
     plt.figure(figsize=size)
-    plt.imshow(img[..., ::-1]); plt.axis('off')
+    plt.imshow(img[..., ::-1]); plt.axis('off')  # [..., ::-1]: BGR→RGB 색 순서 뒤집기, 축 숨김
     if title:
         plt.title(title)
     plt.show()
 
+# show_video: mp4를 노트북 안에서 재생 (반환값 없음)
 def show_video(path, width=480):
     """mp4 영상을 브라우저에서 재생 가능한 H.264로 바꿔 노트북에 표시"""
-    h264 = str(Path(path).with_name(Path(path).stem + '_h264.mp4'))
-    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(path),
-                    '-vcodec', 'libx264', '-pix_fmt', 'yuv420p', h264], check=True)
-    data = base64.b64encode(open(h264, 'rb').read()).decode()
-    display(HTML(f'<video width="{width}" controls loop autoplay muted>'
+    h264 = str(Path(path).with_name(Path(path).stem + '_h264.mp4'))  # 변환본 이름: 원본이름_h264.mp4
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(path),  # ffmpeg로 다시 인코딩 (-y: 덮어쓰기)
+                    '-vcodec', 'libx264', '-pix_fmt', 'yuv420p', h264], check=True)  # 브라우저가 재생하는 H.264 형식
+    data = base64.b64encode(open(h264, 'rb').read()).decode()  # 영상 파일 → 문자열(base64)
+    display(HTML(f'<video width="{width}" controls loop autoplay muted>'  # <video> 태그로 노트북에 삽입
                  f'<source src="data:video/mp4;base64,{data}" type="video/mp4"></video>'))
 
+# save_out: 결과 파일을 SAVE_DIR로 복사 → 복사된 경로 반환
 def save_out(path):
     """결과 파일을 저장 폴더(SAVE_DIR)에 복사"""
     dst = SAVE_DIR / Path(path).name
-    if Path(path).resolve() != dst.resolve():
+    if Path(path).resolve() != dst.resolve():  # 이미 저장 폴더 안의 파일이면 복사 생략
         shutil.copy(path, dst)
     return dst
 ```
@@ -178,29 +186,32 @@ def save_out(path):
 ### 셀 5. 실습 영상 찾기와 분석용 변환
 
 ```python
-VIDEO_NAME = 'lift_sample.mp4'
+VIDEO_NAME = 'lift_sample.mp4'  # 찾을 실습 영상 이름
 
+# ① 현재 폴더 ② 저장 폴더 순서로 찾아 처음 나온 경로 사용 (없으면 None)
 VIDEO_SRC = next((p for p in [Path(VIDEO_NAME), SAVE_DIR / VIDEO_NAME] if p.exists()), None)
-if VIDEO_SRC is None and IN_COLAB:
-    uploaded = files.upload()                               # 파일 선택 창
-    name = next(iter(uploaded))
+if VIDEO_SRC is None and IN_COLAB:  # 두 곳 모두 없을 때만 업로드
+    uploaded = files.upload()                               # 파일 선택 창 → {파일 이름: 내용}
+    name = next(iter(uploaded))  # 올린 파일의 원래 이름 (.mov도 가능)
     VIDEO_SRC = Path(VIDEO_NAME)
-    os.replace(name, VIDEO_SRC)
+    os.replace(name, VIDEO_SRC)  # 이름을 lift_sample.mp4로 바꿈
 assert VIDEO_SRC is not None and VIDEO_SRC.exists(), f'{VIDEO_NAME} 파일을 찾지 못했습니다'
-save_out(VIDEO_SRC)
+save_out(VIDEO_SRC)  # Drive에도 복사 → 다음 실행 땐 업로드 없이 찾음
 
+# prepare_video: 원본 → 긴 변 1280px 이하·소리 없는 H.264 영상
+# 반환: (변환 파일 경로, {fps, frames, width, height})
 def prepare_video(src, dst='lift_input.mp4', max_side=1280):
-    scale = (f"scale='if(gte(iw,ih),min({max_side},iw),-2)':'if(gte(iw,ih),-2,min({max_side},ih))'")
-    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(src), '-vf', scale, '-an',
+    scale = (f"scale='if(gte(iw,ih),min({max_side},iw),-2)':'if(gte(iw,ih),-2,min({max_side},ih))'")  # 긴 변만 max_side로 제한, -2: 비율 유지 + 짝수 크기
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(src), '-vf', scale, '-an',  # -vf: 크기 조절, -an: 소리 제거
                     '-vcodec', 'libx264', '-pix_fmt', 'yuv420p', dst], check=True)
-    cap = cv2.VideoCapture(dst)
-    info = {'fps': cap.get(cv2.CAP_PROP_FPS) or 30, 'frames': int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+    cap = cv2.VideoCapture(dst)  # 변환된 영상 정보 읽기
+    info = {'fps': cap.get(cv2.CAP_PROP_FPS) or 30, 'frames': int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),  # fps를 못 읽으면(0) 30으로
             'width': int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), 'height': int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}
     cap.release()
     return dst, info
 
-VIDEO, VINFO = prepare_video(VIDEO_SRC)
-FPS = VINFO['fps']
+VIDEO, VINFO = prepare_video(VIDEO_SRC)  # 이후 단계는 VIDEO(lift_input.mp4) 사용
+FPS = VINFO['fps']  # 초당 프레임 수 — 초↔프레임 변환 기준
 print(f"{VIDEO}: {VINFO['width']}x{VINFO['height']}, {FPS:.1f}fps, {VINFO['frames']}프레임, "
       f"약 {VINFO['frames'] / FPS:.1f}초")
 show_video(VIDEO, width=360)
@@ -239,17 +250,18 @@ show_video(VIDEO, width=360)
 ```python
 pose_model = YOLO('yolo26n-pose.pt')   # 처음 실행 시 가중치를 자동으로 내려받습니다
 
+# read_frame: 영상에서 idx번째 프레임 한 장을 읽어 반환 (BGR 이미지)
 def read_frame(path, idx):
-    cap = cv2.VideoCapture(path); cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-    ok, frame = cap.read(); cap.release()
+    cap = cv2.VideoCapture(path); cap.set(cv2.CAP_PROP_POS_FRAMES, idx)  # 원하는 프레임 번호로 이동
+    ok, frame = cap.read(); cap.release()  # ok: 읽기 성공 여부
     return frame
 
-frame = read_frame(VIDEO, VINFO['frames'] // 3)
-res = pose_model(frame, verbose=False)[0]
-print('검출된 사람 수:', len(res.boxes))
-print('keypoints.xy  :', tuple(res.keypoints.xy.shape))
-print('keypoints.conf:', tuple(res.keypoints.conf.shape))
-show_bgr(res.plot(), 'YOLO pose result', size=(6, 6))
+frame = read_frame(VIDEO, VINFO['frames'] // 3)  # ✏️ 영상 1/3 지점 — 사람이 안 잡히면 번호 변경
+res = pose_model(frame, verbose=False)[0]  # 이미지 1장 → 결과 객체 1개 ([0])
+print('검출된 사람 수:', len(res.boxes))  # res.boxes: 사람 박스 목록
+print('keypoints.xy  :', tuple(res.keypoints.xy.shape))  # (사람 수, 17, 2): 관절 x, y 좌표(픽셀)
+print('keypoints.conf:', tuple(res.keypoints.conf.shape))  # (사람 수, 17): 관절별 신뢰도 0~1
+show_bgr(res.plot(), 'YOLO pose result', size=(6, 6))  # res.plot(): 박스·스켈레톤을 그린 이미지
 ```
 
 **코드 설명**
@@ -270,21 +282,24 @@ show_bgr(res.plot(), 'YOLO pose result', size=(6, 6))
 ### 셀 7. 주 작업자 한 명의 관절 좌표 표 만들기
 
 ```python
+# COCO 키포인트 0~16번 이름 (번호 순서 고정)
 KP_NAMES = ['nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
             'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
             'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
             'left_knee', 'right_knee', 'left_ankle', 'right_ankle']
 
+# 입력: YOLO 결과 1개(r) / 출력: (kxy, kconf) 또는 None
 def main_person(r):
     """화면에서 가장 크게 보이는 사람 1명의 (좌표 (17,2), 신뢰도 (17,)) — 없으면 None"""
-    if len(r.boxes) == 0:
+    if len(r.boxes) == 0:  # 사람이 한 명도 없으면
         return None
-    k = int(r.boxes.xywh[:, 2:].prod(1).argmax())
-    return (r.keypoints.xy[k].cpu().numpy().astype(float), r.keypoints.conf[k].cpu().numpy().astype(float))
+    k = int(r.boxes.xywh[:, 2:].prod(1).argmax())  # 너비×높이(박스 면적)가 가장 큰 사람 번호
+    return (r.keypoints.xy[k].cpu().numpy().astype(float), r.keypoints.conf[k].cpu().numpy().astype(float))  # GPU 텐서 → numpy 실수 배열
 
-kxy, kconf = main_person(res)
+kxy, kconf = main_person(res)  # kxy: (17,2) 좌표, kconf: (17,) 신뢰도
+# 관절별 좌표·신뢰도 표 (셀 마지막 줄이라 바로 출력됨)
 pd.DataFrame({'kp_id': range(17), 'kp_name': KP_NAMES,
-              'x': kxy[:, 0].round(1), 'y': kxy[:, 1].round(1), 'conf': kconf.round(2)})
+              'x': kxy[:, 0].round(1), 'y': kxy[:, 1].round(1), 'conf': kconf.round(2)})  # [:, 0]: 모든 관절의 x, [:, 1]: y
 ```
 
 **코드 설명**
@@ -302,22 +317,24 @@ kp_id, kp_name, x, y, conf 다섯 열, 17행의 표가 나옵니다. 옆에서 �
 ### 셀 8. 자세 분석에 쓸 6개 관절을 왼쪽·오른쪽으로 나눠 그리기
 
 ```python
+# 자세 분석에 쓸 6개 관절의 키포인트 번호 (왼쪽 몸 / 오른쪽 몸)
 LEFT  = dict(shoulder=5, elbow=7, wrist=9,  hip=11, knee=13, ankle=15)
 RIGHT = dict(shoulder=6, elbow=8, wrist=10, hip=12, knee=14, ankle=16)
 
+# draw_side: 한쪽 몸의 팔, 몸통-다리 관절을 선과 점으로 그림 (img에 직접 그려 반환)
 def draw_side(img, kxy, idx, color=(0, 255, 255)):
-    for chain in (['shoulder', 'elbow', 'wrist'], ['shoulder', 'hip', 'knee', 'ankle']):
-        pts = [tuple(map(int, kxy[idx[n]])) for n in chain]
-        for p, q in zip(pts[:-1], pts[1:]):
+    for chain in (['shoulder', 'elbow', 'wrist'], ['shoulder', 'hip', 'knee', 'ankle']):  # 팔 사슬, 몸통-다리 사슬
+        pts = [tuple(map(int, kxy[idx[n]])) for n in chain]  # 관절 좌표 → 정수 픽셀 (x, y)
+        for p, q in zip(pts[:-1], pts[1:]):  # 이웃한 두 점끼리 짝지음
             cv2.line(img, p, q, color, 3)
         for n, p in zip(chain, pts):
-            cv2.circle(img, p, 6, (0, 0, 255), -1)
-            cv2.putText(img, n, (p[0] + 6, p[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            cv2.circle(img, p, 6, (0, 0, 255), -1)  # 반지름 6 빨간 점, -1: 속 채움
+            cv2.putText(img, n, (p[0] + 6, p[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)  # 관절 이름 글자
     return img
 
-canvas = frame.copy()
-draw_side(canvas, kxy, LEFT, (0, 255, 255))
-draw_side(canvas, kxy, RIGHT, (255, 200, 0))
+canvas = frame.copy()  # 원본 프레임은 두고 복사본에 그림
+draw_side(canvas, kxy, LEFT, (0, 255, 255))  # 왼쪽 몸: 노랑 (색은 BGR 순서)
+draw_side(canvas, kxy, RIGHT, (255, 200, 0))  # 오른쪽 몸: 파랑
 show_bgr(canvas, 'Selected joints (yellow: left, blue: right)', size=(6, 6))
 ```
 
@@ -347,31 +364,34 @@ Step 1 표에서 왼쪽과 오른쪽 중 어느 쪽 관절의 conf가 더 높은
 ### 셀 9. 각도 계산 함수 정의와 검산
 
 ```python
+# joint_angle: 세 점 a, b, c → b에서 잰 사잇각 (도)
 def joint_angle(a, b, c):
     """b를 꼭짓점으로 하는 각 a-b-c (단위: 도)"""
-    ba = np.asarray(a, float) - np.asarray(b, float)
-    bc = np.asarray(c, float) - np.asarray(b, float)
-    cos = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-9)
-    return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
+    ba = np.asarray(a, float) - np.asarray(b, float)  # b→a 벡터
+    bc = np.asarray(c, float) - np.asarray(b, float)  # b→c 벡터
+    cos = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-9)  # 내적 ÷ 길이 곱 = cos θ, 1e-9: 0으로 나눔 방지
+    return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))  # clip: -1~1 밖 반올림 오차 제거 → 라디안 → 도
 
+# tilt_from_vertical: 아래 점→위 점 선분의 수직 기울기 (0°=똑바로, 90°=수평)
 def tilt_from_vertical(lower, upper):
     """lower→upper 선분이 '위쪽 수직선'에서 기운 각도 (단위: 도). 이미지 y축은 아래로 증가"""
-    v = np.asarray(upper, float) - np.asarray(lower, float)
-    cos = np.dot(v, [0.0, -1.0]) / (np.linalg.norm(v) + 1e-9)
-    return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
+    v = np.asarray(upper, float) - np.asarray(lower, float)  # 아래 점→위 점 벡터
+    cos = np.dot(v, [0.0, -1.0]) / (np.linalg.norm(v) + 1e-9)  # [0, -1]: 화면 위쪽 방향 (y는 아래로 증가)
+    return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))  # 위쪽 수직선과의 사잇각 (도)
 
+# body_angles: (kxy, kconf) → {'side', 'trunk', 'knee', 'hip', 'elbow', 'shin'} 또는 None
 def body_angles(kxy, kconf, min_conf=0.3):
     """한 사람의 키포인트 → 각도 묶음 (dict). 신뢰도가 높은 쪽 몸을 쓰고, 판단이 어려우면 None"""
-    l_score, r_score = kconf[list(LEFT.values())].mean(), kconf[list(RIGHT.values())].mean()
-    side, idx = ('L', LEFT) if l_score >= r_score else ('R', RIGHT)
-    if kconf[[idx['shoulder'], idx['hip'], idx['knee'], idx['ankle']]].min() < min_conf:
-        return None
-    p = {name: kxy[i] for name, i in idx.items()}
+    l_score, r_score = kconf[list(LEFT.values())].mean(), kconf[list(RIGHT.values())].mean()  # 왼쪽·오른쪽 6개 관절의 평균 신뢰도
+    side, idx = ('L', LEFT) if l_score >= r_score else ('R', RIGHT)  # 더 잘 보이는 쪽 몸 선택
+    if kconf[[idx['shoulder'], idx['hip'], idx['knee'], idx['ankle']]].min() < min_conf:  # 몸통·다리 관절 하나라도 0.3 미만이면
+        return None  # 판단 불가
+    p = {name: kxy[i] for name, i in idx.items()}  # 관절 이름 → (x, y) 좌표
     return {'side': side,
             'trunk': tilt_from_vertical(p['hip'], p['shoulder']),      # 몸통 기울기
             'knee': joint_angle(p['hip'], p['knee'], p['ankle']),       # 무릎 각도
             'hip': joint_angle(p['shoulder'], p['hip'], p['knee']),     # 엉덩이 각도
-            'elbow': joint_angle(p['shoulder'], p['elbow'], p['wrist']),
+            'elbow': joint_angle(p['shoulder'], p['elbow'], p['wrist']),  # 팔꿈치 각도
             'shin': tilt_from_vertical(p['ankle'], p['knee'])}          # 정강이 기울기
 
 # 결과를 알고 있는 점으로 먼저 검산합니다
@@ -379,8 +399,8 @@ print('직각 90 :', round(joint_angle((0, 0), (1, 0), (1, 1)), 1))
 print('일직선 180 :', round(joint_angle((0, 0), (1, 0), (2, 0)), 1))
 print('수직 0 :', round(tilt_from_vertical((0, 10), (0, 0)), 1))
 print('수평 90 :', round(tilt_from_vertical((0, 0), (10, 0)), 1))
-a = body_angles(kxy, kconf)
-print('영상 프레임:', {k: (round(v, 1) if isinstance(v, float) else v) for k, v in a.items()} if a else '판단 불가')
+a = body_angles(kxy, kconf)  # Step 1 프레임의 각도
+print('영상 프레임:', {k: (round(v, 1) if isinstance(v, float) else v) for k, v in a.items()} if a else '판단 불가')  # 실수 값만 소수 1자리로 반올림
 ```
 
 **코드 설명**
@@ -402,24 +422,25 @@ print('영상 프레임:', {k: (round(v, 1) if isinstance(v, float) else v) for 
 ### 셀 10. 영상 전체에서 프레임별 각도와 키포인트 기록
 
 ```python
-ANGLE_COLS = ['trunk', 'knee', 'hip', 'elbow', 'shin']
+ANGLE_COLS = ['trunk', 'knee', 'hip', 'elbow', 'shin']  # 기록할 각도 열 5개
 
+# extract_pose_track: 영상 → (프레임별 각도 표, {프레임 번호: (좌표, 신뢰도)})
 def extract_pose_track(path, fps):
-    rows, kps = [], {}
-    for i, r in enumerate(pose_model(path, stream=True, verbose=False)):
-        rec = {'frame': i, 'time_s': round(i / fps, 3)}
-        person = main_person(r)
+    rows, kps = [], {}  # rows: 표의 행 목록, kps: 키포인트 원본 보관
+    for i, r in enumerate(pose_model(path, stream=True, verbose=False)):  # stream=True: 한 프레임씩 처리해 메모리 절약
+        rec = {'frame': i, 'time_s': round(i / fps, 3)}  # 프레임 번호, 시각(초)
+        person = main_person(r)  # 가장 크게 보이는 사람 1명 (없으면 None)
         if person is not None:
-            kps[i] = person
-            a = body_angles(*person)
-            if a:
+            kps[i] = person  # Step 5 영상 그리기에 다시 씀
+            a = body_angles(*person)  # *person: (좌표, 신뢰도)를 두 인자로 풀어 넣음
+            if a:  # 각도를 구했을 때만 채움 (못 구하면 NaN)
                 rec.update({k: a[k] for k in ANGLE_COLS})
         rows.append(rec)
-    return pd.DataFrame(rows).reindex(columns=['frame', 'time_s'] + ANGLE_COLS), kps
+    return pd.DataFrame(rows).reindex(columns=['frame', 'time_s'] + ANGLE_COLS), kps  # 열 순서·구성 고정
 
-raw, KPS = extract_pose_track(VIDEO, FPS)
-print('프레임 수:', len(raw), '| 각도를 구하지 못한 프레임 비율:', round(raw['trunk'].isna().mean(), 3))
-raw.round(1).head()
+raw, KPS = extract_pose_track(VIDEO, FPS)  # 가장 오래 걸리는 줄 (영상 전체 추론)
+print('프레임 수:', len(raw), '| 각도를 구하지 못한 프레임 비율:', round(raw['trunk'].isna().mean(), 3))  # isna().mean(): 빈 값(NaN) 비율
+raw.round(1).head()  # 앞 5행 미리보기
 ```
 
 **코드 설명**
@@ -441,19 +462,21 @@ raw.round(1).head()
 ### 셀 11. 결측 보간과 이동 중앙값으로 각도 신호 다듬기
 
 ```python
-MAX_GAP_SEC = 0.2
-SMOOTH_WIN = 5
+MAX_GAP_SEC = 0.2  # ✏️ 보간할 최대 공백(초) — 키우면 긴 공백도 메움
+SMOOTH_WIN = 5  # ✏️ 이동 중앙값 창(프레임) — 키우면 매끄럽지만 반응이 느림
 
+# clean_angles: 원본 각도 표 → 보간·흔들림 제거한 새 표 (원본은 그대로)
 def clean_angles(raw, fps, max_gap_sec=MAX_GAP_SEC, win=SMOOTH_WIN):
-    out = raw.copy()
-    gap = max(1, int(round(max_gap_sec * fps)))
+    out = raw.copy()  # 원본 표는 건드리지 않음
+    gap = max(1, int(round(max_gap_sec * fps)))  # 초 → 프레임 수 (30fps면 6), 최소 1
     for c in ANGLE_COLS:
-        s = raw[c].interpolate(limit=gap, limit_area='inside')
-        out[c] = s.rolling(win, center=True, min_periods=1).median()
+        s = raw[c].interpolate(limit=gap, limit_area='inside')  # 앞뒤 값이 있는 짧은 빈칸만 직선으로 채움
+        out[c] = s.rolling(win, center=True, min_periods=1).median()  # 앞뒤 win프레임의 중앙값, 가장자리도 계산
     return out
 
-ang = clean_angles(raw, FPS)
+ang = clean_angles(raw, FPS)  # 이후 단계는 다듬은 표 ang 사용
 
+# 위: 몸통 기울기, 아래: 무릎 각도 — 회색 원본 vs 파란 다듬은 값
 fig, axes = plt.subplots(2, 1, figsize=(10, 5), sharex=True)
 for ax, c in zip(axes, ['trunk', 'knee']):
     ax.plot(raw['time_s'], raw[c], c='lightgray', lw=1, label='raw')
@@ -491,20 +514,22 @@ SMOOTH_WIN을 15로 키워 다시 실행해 보세요. 그래프가 매끄러워
 ### 셀 12. 자세 판별 규칙 함수 정의
 
 ```python
-RULES = {'shin_standing': 60, 'trunk_upright': 20, 'trunk_stoop': 45, 'knee_straight': 150}
+RULES = {'shin_standing': 60, 'trunk_upright': 20, 'trunk_stoop': 45, 'knee_straight': 150}  # ✏️ 판별 기준(도) — 바꾸면 자세 판정 경계가 달라짐
 
+# classify_posture: (몸통, 무릎, 정강이 각도) → 자세 이름 1개
+# 위에서부터 검사해 처음 맞는 규칙에서 멈춤 (순서 중요)
 def classify_posture(trunk, knee, shin, rules=RULES):
-    if any(v is None or np.isnan(v) for v in (trunk, knee, shin)):
+    if any(v is None or np.isnan(v) for v in (trunk, knee, shin)):  # 각도가 하나라도 없으면
         return 'UNKNOWN'
-    if shin > rules['shin_standing']:
+    if shin > rules['shin_standing']:  # 정강이가 60° 넘게 기울면 서 있지 않음
         return 'NOT_STANDING'
-    if trunk <= rules['trunk_upright']:
+    if trunk <= rules['trunk_upright']:  # 몸통 20° 이하: 곧게 섬
         return 'UPRIGHT'
-    if trunk >= rules['trunk_stoop'] and knee >= rules['knee_straight']:
+    if trunk >= rules['trunk_stoop'] and knee >= rules['knee_straight']:  # 허리 깊이 굽힘 + 무릎 폄: 위험
         return 'STOOP'
-    if knee < rules['knee_straight']:
+    if knee < rules['knee_straight']:  # 무릎 굽힘: 권장 자세
         return 'SQUAT'
-    return 'BENDING'
+    return 'BENDING'  # 그 밖: 허리를 어느 정도 굽힘
 ```
 
 **코드 설명**
@@ -522,38 +547,39 @@ def classify_posture(trunk, knee, shin, rules=RULES):
 ### 셀 13. 가상 작업자 4자세로 규칙 검증
 
 ```python
-SEG_LEN = dict(shin=95, thigh=95, torso=130, upper_arm=70, forearm=65)
+SEG_LEN = dict(shin=95, thigh=95, torso=130, upper_arm=70, forearm=65)  # 가상 작업자 신체 길이(픽셀)
 
+# synth_pose: (몸통 기울기, 무릎 굽힘) → 가상 관절 좌표·신뢰도
 def synth_pose(trunk_deg, bend_deg, ankle=(200, 420)):
     """몸통 기울기, 무릎 굽힘(정강이 기울기) → 오른쪽 몸 키포인트 (17,2)와 신뢰도 (17,)
     무릎 각도 = 180 - 2 × bend_deg 가 되도록 정강이는 앞으로, 허벅지는 뒤로 같은 각도만큼 기울입니다."""
-    s, t = np.radians(bend_deg), np.radians(trunk_deg)
-    ankle = np.array(ankle, float)
-    knee = ankle + SEG_LEN['shin'] * np.array([np.sin(s), -np.cos(s)])
-    hip = knee + SEG_LEN['thigh'] * np.array([-np.sin(s), -np.cos(s)])
-    shoulder = hip + SEG_LEN['torso'] * np.array([np.sin(t), -np.cos(t)])
-    elbow = shoulder + [0, SEG_LEN['upper_arm']]
+    s, t = np.radians(bend_deg), np.radians(trunk_deg)  # 도 → 라디안 (sin, cos 계산용)
+    ankle = np.array(ankle, float)  # 발목이 기준점 (바닥)
+    knee = ankle + SEG_LEN['shin'] * np.array([np.sin(s), -np.cos(s)])  # 정강이: 발목에서 앞쪽 위로
+    hip = knee + SEG_LEN['thigh'] * np.array([-np.sin(s), -np.cos(s)])  # 허벅지: 무릎에서 뒤쪽 위로
+    shoulder = hip + SEG_LEN['torso'] * np.array([np.sin(t), -np.cos(t)])  # 몸통: t만큼 기운 위쪽 방향 (y 위쪽이 -)
+    elbow = shoulder + [0, SEG_LEN['upper_arm']]  # 팔은 아래로 늘어뜨림
     wrist = elbow + [0, SEG_LEN['forearm']]
-    kxy, kconf = np.zeros((17, 2)), np.zeros(17)
+    kxy, kconf = np.zeros((17, 2)), np.zeros(17)  # 나머지 관절은 좌표 0, 신뢰도 0
     for name, p in dict(shoulder=shoulder, elbow=elbow, wrist=wrist, hip=hip, knee=knee, ankle=ankle).items():
-        kxy[RIGHT[name]] = p; kconf[RIGHT[name]] = 1.0
+        kxy[RIGHT[name]] = p; kconf[RIGHT[name]] = 1.0  # 오른쪽 몸 6개 관절만 채움
     return kxy, kconf
 
-TEST_POSES = {'upright': (5, 3, 'UPRIGHT'), 'stoop': (70, 4, 'STOOP'),
+TEST_POSES = {'upright': (5, 3, 'UPRIGHT'), 'stoop': (70, 4, 'STOOP'),  # 이름: (몸통°, 굽힘°, 기대 상태)
               'squat': (35, 40, 'SQUAT'), 'half_bend': (40, 10, 'BENDING')}
 
 fig, axes = plt.subplots(1, 4, figsize=(13, 3.6))
-for ax, (case, (t, b, expected)) in zip(axes, TEST_POSES.items()):
+for ax, (case, (t, b, expected)) in zip(axes, TEST_POSES.items()):  # 자세 4개를 그림 4칸에 하나씩
     kxy_, kconf_ = synth_pose(t, b)
-    a = body_angles(kxy_, kconf_)
+    a = body_angles(kxy_, kconf_)  # 실제 영상과 같은 함수로 각도 계산
     state = classify_posture(a['trunk'], a['knee'], a['shin'])
     for chain in (['shoulder', 'elbow', 'wrist'], ['shoulder', 'hip', 'knee', 'ankle']):
         c = np.array([kxy_[RIGHT[n]] for n in chain])
-        ax.plot(c[:, 0], c[:, 1], '-o', lw=3)
-    ax.set_xlim(60, 400); ax.set_ylim(440, 100); ax.set_aspect('equal'); ax.set_xticks([]); ax.set_yticks([])
+        ax.plot(c[:, 0], c[:, 1], '-o', lw=3)  # 관절을 선 + 점으로
+    ax.set_xlim(60, 400); ax.set_ylim(440, 100); ax.set_aspect('equal'); ax.set_xticks([]); ax.set_yticks([])  # ylim을 거꾸로: 이미지처럼 y가 아래로 증가
     ax.set_title(f"{case} -> {state}\ntrunk {a['trunk']:.0f}, knee {a['knee']:.0f}, shin {a['shin']:.0f}",
                  fontsize=9, color='red' if state == 'STOOP' else 'black')
-    assert state == expected, f'{case}: 기대 {expected}, 결과 {state}'
+    assert state == expected, f'{case}: 기대 {expected}, 결과 {state}'  # 기대와 다르면 여기서 멈춤
 plt.tight_layout(); plt.show()
 print('가상 자세 4종 모두 기대한 상태로 분류되었습니다.')
 ```
@@ -579,19 +605,21 @@ print('가상 자세 4종 모두 기대한 상태로 분류되었습니다.')
 ### 셀 14. 실제 영상에 적용 — 상태별 프레임 수와 자세 타임라인
 
 ```python
+# 상태 표시 순서와 색 (UPRIGHT 초록, STOOP 빨강, SQUAT 청록, BENDING 노랑)
 STATE_ORDER = ['UPRIGHT', 'BENDING', 'SQUAT', 'STOOP', 'NOT_STANDING', 'UNKNOWN']
 STATE_HEX = {'UPRIGHT': '#4caf50', 'BENDING': '#ffb300', 'SQUAT': '#26a69a', 'STOOP': '#e53935',
              'NOT_STANDING': '#9e9e9e', 'UNKNOWN': '#e0e0e0'}
 
-ang['state'] = [classify_posture(t, k, s) for t, k, s in zip(ang['trunk'], ang['knee'], ang['shin'])]
-print(ang['state'].value_counts().reindex(STATE_ORDER, fill_value=0).to_string())
+ang['state'] = [classify_posture(t, k, s) for t, k, s in zip(ang['trunk'], ang['knee'], ang['shin'])]  # 다듬은 각도로 프레임마다 상태 판정
+print(ang['state'].value_counts().reindex(STATE_ORDER, fill_value=0).to_string())  # 나오지 않은 상태도 0으로 표시
 
+# plot_state_timeline: 상태 열이 있는 표 → 시간축 위 상태 색 띠 (ax에 그림)
 def plot_state_timeline(df, ax):
     for st in STATE_ORDER:
-        m = df['state'] == st
-        ax.scatter(df.loc[m, 'time_s'], [0] * int(m.sum()), c=STATE_HEX[st], marker='|', s=600, label=st)
+        m = df['state'] == st  # 이 상태인 행만 True
+        ax.scatter(df.loc[m, 'time_s'], [0] * int(m.sum()), c=STATE_HEX[st], marker='|', s=600, label=st)  # 프레임마다 세로 막대(marker='|') 찍기
     ax.set_yticks([]); ax.set_xlabel('time (s)')
-    ax.legend(ncol=6, fontsize=8, loc='upper center', bbox_to_anchor=(0.5, -0.45), frameon=False)
+    ax.legend(ncol=6, fontsize=8, loc='upper center', bbox_to_anchor=(0.5, -0.45), frameon=False)  # 범례를 그림 아래 한 줄로
 
 fig, ax = plt.subplots(figsize=(10, 1.4)); plot_state_timeline(ang, ax)
 ax.set_title('Posture state per frame'); plt.show()
@@ -625,62 +653,66 @@ ax.set_title('Posture state per frame'); plt.show()
 ### 셀 15. 위험 점수, 동작 구간 찾기, 동작 요약 함수 정의
 
 ```python
-LIFT_RULES = {'start_trunk': 30, 'end_trunk': 20, 'min_lift_s': 0.5,
-              'high_risk': 70, 'medium_risk': 40, **RULES}
+LIFT_RULES = {'start_trunk': 30, 'end_trunk': 20, 'min_lift_s': 0.5,  # ✏️ 시작 30°·끝 20°, 0.5초 미만 버림
+              'high_risk': 70, 'medium_risk': 40, **RULES}  # 등급 기준 + Step 3의 RULES 합침
 
+# risk_score: 최대 몸통 기울기, bottom 무릎 각도, STOOP 시간(초) → 0~100 정수
 def risk_score(max_trunk, knee_bottom, stoop_s):
-    trunk_pts = np.clip((max_trunk - 20) / 50, 0, 1) * 50
-    knee_pts = np.clip((knee_bottom - 120) / 50, 0, 1) * 30
-    hold_pts = np.clip(stoop_s / 2.0, 0, 1) * 20
+    trunk_pts = np.clip((max_trunk - 20) / 50, 0, 1) * 50  # 20°→70°를 0~1로 자른 뒤 최대 50점
+    knee_pts = np.clip((knee_bottom - 120) / 50, 0, 1) * 30  # 120°→170°, 최대 30점 (무릎 덜 굽힐수록 높음)
+    hold_pts = np.clip(stoop_s / 2.0, 0, 1) * 20  # STOOP 0→2초, 최대 20점
     return int(round(trunk_pts + knee_pts + hold_pts))
 
+# risk_grade: 점수 → 'HIGH'(70 이상) / 'MEDIUM'(40 이상) / 'LOW'
 def risk_grade(score, rules=LIFT_RULES):
     return 'HIGH' if score >= rules['high_risk'] else 'MEDIUM' if score >= rules['medium_risk'] else 'LOW'
 
+# find_lift_segments: 히스테리시스로 들기 동작 구간 찾기
 def find_lift_segments(df, rules=LIFT_RULES):
     """몸통 기울기 → [(시작 행, 끝 행), ...]"""
-    trunk = df['trunk'].where(df['state'] != 'NOT_STANDING').to_numpy()
-    segs, start, last_low, last_valid = [], None, 0, 0
+    trunk = df['trunk'].where(df['state'] != 'NOT_STANDING').to_numpy()  # NOT_STANDING 행의 몸통 값은 NaN으로 지움
+    segs, start, last_low, last_valid = [], None, 0, 0  # start: 진행 중인 동작의 시작 행 (None=동작 밖)
     for i, t in enumerate(trunk):
-        if np.isnan(t):
+        if np.isnan(t):  # 각도 없는 프레임은 건너뜀
             continue
-        last_valid = i
-        if start is None:
-            if t < rules['end_trunk']:
+        last_valid = i  # 마지막으로 값이 있던 행
+        if start is None:  # 동작 밖일 때
+            if t < rules['end_trunk']:  # 20° 아래: 곧게 선 순간 기억
                 last_low = i
-            elif t > rules['start_trunk']:
-                start = last_low
-        elif t < rules['end_trunk']:
-            segs.append((start, i)); start, last_low = None, i
-    if start is not None:
+            elif t > rules['start_trunk']:  # 30° 넘음: 동작 시작 확정
+                start = last_low  # 시작은 마지막으로 20° 아래였던 행
+        elif t < rules['end_trunk']:  # 동작 중 20° 아래로: 동작 끝
+            segs.append((start, i)); start, last_low = None, i  # 구간 저장 후 다시 동작 밖 상태로
+    if start is not None:  # 영상이 동작 도중에 끝난 경우
         segs.append((start, last_valid))
     return segs
 
+# summarize_lifts: 각도·상태 표 → 동작별 요약 표 (13개 열)
 def summarize_lifts(df, fps, rules=LIFT_RULES):
     rows = []
     for s, e in find_lift_segments(df, rules):
-        seg = df.iloc[s:e + 1]
-        if (e - s + 1) / fps < rules['min_lift_s']:
+        seg = df.iloc[s:e + 1]  # 끝 행까지 포함하려고 e + 1
+        if (e - s + 1) / fps < rules['min_lift_s']:  # 0.5초보다 짧으면 잡음으로 보고 버림
             continue
-        b = int(seg['trunk'].idxmax())
+        b = int(seg['trunk'].idxmax())  # 가장 깊이 굽힌 행 번호 (bottom)
         max_trunk = float(seg['trunk'].max())
-        knee_b = float(df.loc[b, 'knee']) if not np.isnan(df.loc[b, 'knee']) else float(seg['knee'].median())
-        stoop_s = (seg['state'] == 'STOOP').sum() / fps
-        if max_trunk >= rules['trunk_stoop'] and knee_b >= rules['knee_straight']:
+        knee_b = float(df.loc[b, 'knee']) if not np.isnan(df.loc[b, 'knee']) else float(seg['knee'].median())  # bottom의 무릎 각도, 없으면 구간 중앙값
+        stoop_s = (seg['state'] == 'STOOP').sum() / fps  # STOOP 프레임 수 ÷ fps = 초
+        if max_trunk >= rules['trunk_stoop'] and knee_b >= rules['knee_straight']:  # 동작 유형은 bottom 순간 자세로 판정
             lift_type = 'STOOP'
         elif knee_b < rules['knee_straight']:
             lift_type = 'SQUAT'
         else:
             lift_type = 'BENDING'
         score = risk_score(max_trunk, knee_b, stoop_s)
-        rows.append({'lift_id': len(rows) + 1, 'start_frame': int(df.loc[s, 'frame']), 'end_frame': int(df.loc[e, 'frame']),
+        rows.append({'lift_id': len(rows) + 1, 'start_frame': int(df.loc[s, 'frame']), 'end_frame': int(df.loc[e, 'frame']),  # 동작 번호는 1부터
                      'start_s': round(s / fps, 2), 'bottom_s': round(b / fps, 2), 'end_s': round(e / fps, 2),
                      'duration_s': round((e - s + 1) / fps, 2), 'max_trunk_deg': round(max_trunk, 1),
                      'knee_at_bottom_deg': round(knee_b, 1), 'stoop_s': round(stoop_s, 2),
                      'lift_type': lift_type, 'risk_score': score, 'risk_grade': risk_grade(score, rules)})
     cols = ['lift_id', 'start_frame', 'end_frame', 'start_s', 'bottom_s', 'end_s', 'duration_s', 'max_trunk_deg',
             'knee_at_bottom_deg', 'stoop_s', 'lift_type', 'risk_score', 'risk_grade']
-    return pd.DataFrame(rows, columns=cols)
+    return pd.DataFrame(rows, columns=cols)  # 동작이 없어도 열 구성은 유지
 ```
 
 **코드 설명**
@@ -707,27 +739,29 @@ def summarize_lifts(df, fps, rules=LIFT_RULES):
 KEYFRAMES = [(0.0, 5, 3), (1.0, 5, 3), (1.8, 75, 4), (2.4, 75, 4), (3.2, 5, 3),        # 허리 굽혀 들기
              (4.2, 5, 3), (5.0, 35, 45), (5.6, 35, 45), (6.4, 5, 3),                    # 무릎 굽혀 들기
              (7.4, 5, 3), (8.2, 65, 6), (9.8, 65, 6), (10.6, 5, 3), (11.5, 5, 3)]       # 허리 굽혀 오래
-EXPECTED_TYPES = ['STOOP', 'SQUAT', 'STOOP']
+EXPECTED_TYPES = ['STOOP', 'SQUAT', 'STOOP']  # 세 동작의 정답 유형
 
+# synth_sequence: 키프레임 → 프레임별 (좌표, 신뢰도) 목록, 흔들림·놓침 포함
 def synth_sequence(keyframes, fps=30, noise_px=1.5, drop_rate=0.05, seed=0):
-    rng = np.random.default_rng(seed)
-    ts, tr, bd = map(np.array, zip(*keyframes))
+    rng = np.random.default_rng(seed)  # seed 고정: 실행할 때마다 같은 결과
+    ts, tr, bd = map(np.array, zip(*keyframes))  # 시각, 몸통, 굽힘 열로 분리
     seq = []
-    for i in range(int(ts[-1] * fps) + 1):
+    for i in range(int(ts[-1] * fps) + 1):  # 마지막 시각까지 프레임마다
         t = i / fps
-        kxy_, kconf_ = synth_pose(np.interp(t, ts, tr), np.interp(t, ts, bd))
-        kxy_ = kxy_ + rng.normal(0, noise_px, kxy_.shape)
-        if rng.random() < drop_rate:
+        kxy_, kconf_ = synth_pose(np.interp(t, ts, tr), np.interp(t, ts, bd))  # np.interp: 키프레임 사이 값을 직선 보간
+        kxy_ = kxy_ + rng.normal(0, noise_px, kxy_.shape)  # 좌표에 표준편차 1.5px 흔들림
+        if rng.random() < drop_rate:  # 약 5% 프레임
             kconf_ = kconf_ * 0                        # 관절을 놓친 프레임
         seq.append((kxy_, kconf_))
     return seq
 
-SYN_FPS = 30
+SYN_FPS = 30  # 가상 영상 fps
 syn_seq = synth_sequence(KEYFRAMES, SYN_FPS)
+# 실제 영상과 같은 순서로 처리: 각도 → 다듬기 → 상태 → 동작 요약
 syn_rows = []
 for i, (kxy_, kconf_) in enumerate(syn_seq):
     a = body_angles(kxy_, kconf_)
-    syn_rows.append({'frame': i, 'time_s': round(i / SYN_FPS, 3), **({k: a[k] for k in ANGLE_COLS} if a else {})})
+    syn_rows.append({'frame': i, 'time_s': round(i / SYN_FPS, 3), **({k: a[k] for k in ANGLE_COLS} if a else {})})  # 각도를 못 구하면 각도 열 없이 → NaN
 syn_raw = pd.DataFrame(syn_rows).reindex(columns=['frame', 'time_s'] + ANGLE_COLS)
 syn = clean_angles(syn_raw, SYN_FPS)
 syn['state'] = [classify_posture(t, k, s) for t, k, s in zip(syn['trunk'], syn['knee'], syn['shin'])]
@@ -735,7 +769,7 @@ syn_lifts = summarize_lifts(syn, SYN_FPS)
 
 print('놓친 프레임:', int(syn_raw['trunk'].isna().sum()), '/', len(syn_raw))
 display(syn_lifts)
-assert syn_lifts['lift_type'].tolist() == EXPECTED_TYPES, syn_lifts['lift_type'].tolist()
+assert syn_lifts['lift_type'].tolist() == EXPECTED_TYPES, syn_lifts['lift_type'].tolist()  # 정답과 다르면 멈춤
 print('가상 작업자의 들기 3번이 모두 기대한 유형으로 분류되었습니다.')
 ```
 
@@ -759,24 +793,25 @@ print('가상 작업자의 들기 3번이 모두 기대한 유형으로 분류�
 
 ```python
 # 가상 작업자 영상으로 만들어 눈으로 확인
+# render_synthetic: 가상 좌표·상태·동작 표 → 480×480 mp4 파일 (경로 반환)
 def render_synthetic(seq, df, lifts, dst='synthetic_worker.mp4', fps=SYN_FPS):
-    writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), fps, (480, 480))
+    writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), fps, (480, 480))  # mp4 영상 쓰기 객체
     for i, (kxy_, _) in enumerate(seq):
-        img = np.full((480, 480, 3), 255, np.uint8)
-        st = df.loc[i, 'state']
+        img = np.full((480, 480, 3), 255, np.uint8)  # 흰 배경 이미지
+        st = df.loc[i, 'state']  # 이 프레임의 자세 상태
         col = tuple(int(STATE_HEX[st][j:j + 2], 16) for j in (5, 3, 1))     # hex → BGR
         for chain in (['shoulder', 'elbow', 'wrist'], ['shoulder', 'hip', 'knee', 'ankle']):
             pts = [tuple(map(int, kxy_[RIGHT[n]])) for n in chain]
             for p, q in zip(pts[:-1], pts[1:]):
                 cv2.line(img, p, q, col, 6)
-        cv2.circle(img, tuple(map(int, kxy_[RIGHT['shoulder']] + [12, -25])), 18, col, 4)
-        cv2.line(img, (0, 425), (480, 425), (120, 120, 120), 2)
+        cv2.circle(img, tuple(map(int, kxy_[RIGHT['shoulder']] + [12, -25])), 18, col, 4)  # 어깨 앞 위쪽 원 = 머리
+        cv2.line(img, (0, 425), (480, 425), (120, 120, 120), 2)  # 회색 바닥선
         cv2.putText(img, f'{st}', (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.9, col, 2)
-        cur = lifts[(lifts['start_frame'] <= i) & (lifts['end_frame'] >= i)]
+        cur = lifts[(lifts['start_frame'] <= i) & (lifts['end_frame'] >= i)]  # 지금 프레임이 속한 동작
         if len(cur):
             cv2.putText(img, f"LIFT #{cur.iloc[0]['lift_id']}", (12, 68), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
-        writer.write(img)
-    writer.release()
+        writer.write(img)  # 프레임 1장 기록
+    writer.release()  # 파일 마무리 (빼면 영상이 깨짐)
     return dst
 
 show_video(render_synthetic(syn_seq, syn, syn_lifts), width=320)
@@ -798,13 +833,13 @@ show_video(render_synthetic(syn_seq, syn, syn_lifts), width=320)
 ### 셀 18. 실제 영상의 들기 동작 표 만들기와 저장
 
 ```python
-lifts = summarize_lifts(ang, FPS)
-lifts.to_csv('lift_events.csv', index=False); save_out('lift_events.csv')
-json.dump(LIFT_RULES, open('lift_rules.json', 'w'), indent=2); save_out('lift_rules.json')
+lifts = summarize_lifts(ang, FPS)  # 실제 영상의 들기 동작 표
+lifts.to_csv('lift_events.csv', index=False); save_out('lift_events.csv')  # CSV 저장 + Drive 복사
+json.dump(LIFT_RULES, open('lift_rules.json', 'w'), indent=2); save_out('lift_rules.json')  # 이번에 쓴 기준값 기록
 
 print('찾은 들기 동작:', len(lifts))
 if len(lifts):
-    print(lifts['lift_type'].value_counts().to_string())
+    print(lifts['lift_type'].value_counts().to_string())  # 유형별 동작 수
 else:
     print('들기 동작이 없습니다. 영상에 서 있는 자세에서 몸을 굽히는 장면이 있는지 확인하세요.')
 lifts
@@ -827,17 +862,18 @@ lifts
 ### 셀 19. 동작 구간을 위험 등급 색으로 표시한 각도 그래프
 
 ```python
-GRADE_HEX = {'HIGH': '#e53935', 'MEDIUM': '#ffb300', 'LOW': '#43a047'}
+GRADE_HEX = {'HIGH': '#e53935', 'MEDIUM': '#ffb300', 'LOW': '#43a047'}  # 위험 등급 색 (빨강, 주황, 초록)
 
+# plot_lift_timeline: 각도 그래프 위에 동작 구간을 등급 색으로 칠함 (ax에 그림)
 def plot_lift_timeline(df, lifts, ax, rules=LIFT_RULES):
     ax.plot(df['time_s'], df['trunk'], c='tab:blue', lw=2, label='trunk tilt')
     ax.plot(df['time_s'], df['knee'], c='tab:gray', lw=1, alpha=.7, label='knee angle')
-    ax.axhline(rules['start_trunk'], ls=':', c='k', lw=1)
-    ax.axhline(rules['end_trunk'], ls=':', c='k', lw=1)
-    ax.axhline(rules['trunk_stoop'], ls='--', c='red', lw=1, label=f"stoop {rules['trunk_stoop']} deg")
-    for _, l in lifts.iterrows():
-        ax.axvspan(l['start_s'], l['end_s'], color=GRADE_HEX[l['risk_grade']], alpha=.18)
-        ax.text((l['start_s'] + l['end_s']) / 2, 175, f"#{l['lift_id']} {l['lift_type']}\n{l['risk_score']}",
+    ax.axhline(rules['start_trunk'], ls=':', c='k', lw=1)  # 시작 기준 30° 점선
+    ax.axhline(rules['end_trunk'], ls=':', c='k', lw=1)  # 끝 기준 20° 점선
+    ax.axhline(rules['trunk_stoop'], ls='--', c='red', lw=1, label=f"stoop {rules['trunk_stoop']} deg")  # STOOP 기준 45° 빨간 파선
+    for _, l in lifts.iterrows():  # 동작 하나씩 (행 단위 반복)
+        ax.axvspan(l['start_s'], l['end_s'], color=GRADE_HEX[l['risk_grade']], alpha=.18)  # 동작 구간 배경을 등급 색으로
+        ax.text((l['start_s'] + l['end_s']) / 2, 175, f"#{l['lift_id']} {l['lift_type']}\n{l['risk_score']}",  # 구간 위에 '#번호 유형'과 점수
                 ha='center', va='top', fontsize=8)
     ax.set_ylim(0, 185); ax.set_ylabel('deg'); ax.set_xlabel('time (s)'); ax.grid(alpha=.3)
     ax.legend(loc='center right', fontsize=8)
@@ -873,20 +909,21 @@ Lift segments (shaded by risk grade) 그래프가 나옵니다. 옆에서 찍은
 ### 셀 20. STOOP 지속 경고 클래스와 점검
 
 ```python
+# StoopAlarm: 프레임 상태를 하나씩 넣으면 경고 여부(True/False) 반환
 class StoopAlarm:
     """STOOP 상태가 hold_sec 이상 이어지면 True"""
     def __init__(self, fps, hold_sec=0.5):
-        self.need = max(1, int(round(fps * hold_sec)))
-        self.run = 0
+        self.need = max(1, int(round(fps * hold_sec)))  # 경고에 필요한 연속 프레임 수 (30fps×0.5초=15)
+        self.run = 0  # 지금까지 이어진 STOOP 프레임 수
 
     def update(self, state):
-        self.run = self.run + 1 if state == 'STOOP' else 0
+        self.run = self.run + 1 if state == 'STOOP' else 0  # STOOP이면 +1, 끊기면 0부터 다시
         return self.run >= self.need
 
 # 점검 — 30fps에서 3프레임짜리 STOOP은 무시, 20프레임짜리는 15번째 프레임부터 경고
 alarm = StoopAlarm(30)
-flags = [alarm.update(s) for s in ['UPRIGHT'] * 5 + ['STOOP'] * 3 + ['UPRIGHT'] * 5 + ['STOOP'] * 20]
-assert sum(flags) == 20 - 15 + 1, sum(flags)
+flags = [alarm.update(s) for s in ['UPRIGHT'] * 5 + ['STOOP'] * 3 + ['UPRIGHT'] * 5 + ['STOOP'] * 20]  # 짧은 STOOP 3프레임, 긴 STOOP 20프레임
+assert sum(flags) == 20 - 15 + 1, sum(flags)  # 15~20번째 = 6프레임만 경고
 print('경고 프레임 수:', sum(flags))
 ```
 
@@ -904,68 +941,73 @@ print('경고 프레임 수:', sum(flags))
 ### 셀 21. 검토 영상 만들기와 프레임별 기록 저장
 
 ```python
+# 스켈레톤으로 이을 관절 번호 쌍 (팔, 어깨선, 몸통, 다리, 코-어깨)
 SKELETON = [(5, 7), (7, 9), (6, 8), (8, 10), (5, 6), (5, 11), (6, 12), (11, 12),
             (11, 13), (13, 15), (12, 14), (14, 16), (0, 5), (0, 6)]
-hex2bgr = lambda h: tuple(int(h[j:j + 2], 16) for j in (5, 3, 1))
+hex2bgr = lambda h: tuple(int(h[j:j + 2], 16) for j in (5, 3, 1))  # '#rrggbb' → OpenCV BGR 튜플
 
+# draw_skeleton: 신뢰도 0.3 넘는 관절만 선·점으로 그림
 def draw_skeleton(img, kxy, kconf, color, min_conf=0.3):
     for a, b in SKELETON:
-        if kconf[a] > min_conf and kconf[b] > min_conf:
+        if kconf[a] > min_conf and kconf[b] > min_conf:  # 두 관절 모두 보일 때만 선
             cv2.line(img, tuple(map(int, kxy[a])), tuple(map(int, kxy[b])), color, 3)
     for p, c in zip(kxy, kconf):
         if c > min_conf:
             cv2.circle(img, tuple(map(int, p)), 4, (255, 255, 255), -1)
 
+# put_label: 검은 상자 위에 글자 — 밝은 배경에서도 읽히게
 def put_label(img, text, org, color, scale=0.7):
-    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
-    cv2.rectangle(img, (org[0] - 6, org[1] - th - 8), (org[0] + tw + 6, org[1] + 8), (0, 0, 0), -1)
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)  # 글자 너비·높이(픽셀) 측정
+    cv2.rectangle(img, (org[0] - 6, org[1] - th - 8), (org[0] + tw + 6, org[1] + 8), (0, 0, 0), -1)  # 글자 뒤 검은 배경 (-1: 속 채움)
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2)
 
+# render_review: 원본 영상 + 기록 → 검토 영상 저장, 프레임별 경고(1/0) 목록 반환
+# 모델을 다시 돌리지 않고 Step 2에서 저장한 키포인트(kps)로 그림
 def render_review(src, df, kps, lifts, fps, dst='posture_review.mp4', banner_sec=1.5):
     cap = cv2.VideoCapture(src)
-    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-    alarm, warn_flags, lift_of = StoopAlarm(fps), [], np.zeros(len(df), int)
-    for _, l in lifts.iterrows():
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))  # 영상 가로·세로(픽셀)
+    writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))  # 원본과 같은 크기·fps로 저장
+    alarm, warn_flags, lift_of = StoopAlarm(fps), [], np.zeros(len(df), int)  # lift_of: 프레임별 동작 번호 (0=동작 밖)
+    for _, l in lifts.iterrows():  # 동작 구간 프레임에 동작 번호 채움
         lift_of[l['start_frame']:l['end_frame'] + 1] = l['lift_id']
-    scale = max(0.6, min(w, h) / 720)
+    scale = max(0.6, min(w, h) / 720)  # 영상 크기에 맞춘 글자 배율
     i = 0
     while True:
         ok, frame = cap.read()
-        if not ok or i >= len(df):
+        if not ok or i >= len(df):  # 영상 끝 또는 기록 끝이면 종료
             break
         st = df.loc[i, 'state']
-        warn = alarm.update(st); warn_flags.append(int(warn))
-        if i in kps:
+        warn = alarm.update(st); warn_flags.append(int(warn))  # 경고 여부 기록 (1/0)
+        if i in kps:  # 사람이 잡힌 프레임만 스켈레톤
             draw_skeleton(frame, *kps[i], hex2bgr(STATE_HEX[st]))
-        done = lifts[lifts['end_frame'] < i]
+        done = lifts[lifts['end_frame'] < i]  # 이미 끝난 동작들
         lines = [(f'STATE: {st}', hex2bgr(STATE_HEX[st]))]
         if not np.isnan(df.loc[i, 'trunk']):
             lines += [(f"TRUNK {df.loc[i, 'trunk']:.0f}  KNEE {df.loc[i, 'knee']:.0f}", (255, 255, 255))]
         lines += [(f'LIFTS: {len(done)}', (255, 255, 255))]
         for j, (text, col) in enumerate(lines):
             put_label(frame, text, (16, int(36 * scale) + j * int(38 * scale)), col, 0.7 * scale)
-        if lift_of[i]:
+        if lift_of[i]:  # 동작 중이면 오른쪽 위에 LIFT #n
             put_label(frame, f'LIFT #{lift_of[i]}', (w - int(170 * scale), int(36 * scale)), (255, 255, 255), 0.7 * scale)
-        recent = done[(i - done['end_frame']) <= banner_sec * fps]
+        recent = done[(i - done['end_frame']) <= banner_sec * fps]  # 끝난 지 1.5초 이내인 동작
         if len(recent):
-            l = recent.iloc[-1]
+            l = recent.iloc[-1]  # 가장 최근 동작 1개
             put_label(frame, f"#{l['lift_id']} {l['lift_type']} | risk {l['risk_score']} {l['risk_grade']}",
                       (16, h - int(30 * scale)), hex2bgr(GRADE_HEX[l['risk_grade']]), 0.8 * scale)
-        if warn:
+        if warn:  # STOOP 0.5초 이상: 빨간 테두리 + 경고 글자
             cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), max(8, int(12 * scale)))
             put_label(frame, 'WARNING: STOOP LIFT', (w // 2 - int(150 * scale), h // 2), (0, 0, 255), 0.9 * scale)
         writer.write(frame)
         i += 1
-    cap.release(); writer.release()
+    cap.release(); writer.release()  # 파일 닫기 (빼면 영상이 깨짐)
     return warn_flags
 
-warn_flags = render_review(VIDEO, ang, KPS, lifts, FPS)
-ang['warning'] = pd.Series(warn_flags, dtype=float).reindex(range(len(ang))).fillna(0).astype(int)
-ang['lift_id'] = 0
-for _, l in lifts.iterrows():
-    ang.loc[l['start_frame']:l['end_frame'], 'lift_id'] = l['lift_id']
-frames_out = ang.rename(columns={'trunk': 'trunk_deg', 'knee': 'knee_deg', 'hip': 'hip_deg',
+warn_flags = render_review(VIDEO, ang, KPS, lifts, FPS)  # 영상을 다시 그리기만 함 (추론 없음)
+ang['warning'] = pd.Series(warn_flags, dtype=float).reindex(range(len(ang))).fillna(0).astype(int)  # 길이를 ang에 맞추고 빈 칸은 0
+ang['lift_id'] = 0  # 기본값 0 = 동작 밖
+for _, l in lifts.iterrows():  # 동작 구간 행에 동작 번호 기록
+    ang.loc[l['start_frame']:l['end_frame'], 'lift_id'] = l['lift_id']  # loc 범위는 끝 행까지 포함
+frames_out = ang.rename(columns={'trunk': 'trunk_deg', 'knee': 'knee_deg', 'hip': 'hip_deg',  # 각도 열 이름에 _deg 붙임
                                  'elbow': 'elbow_deg', 'shin': 'shin_deg'}).round(2)
 frames_out.to_csv('posture_frames.csv', index=False); save_out('posture_frames.csv')
 save_out('posture_review.mp4')
@@ -993,35 +1035,36 @@ show_video('posture_review.mp4', width=480)
 ### 셀 22. 핵심 지표 표와 작업 리포트 그림 저장
 
 ```python
+# lift_kpis: 동작 표·프레임 표 → 핵심 지표 dict (영상 길이, 횟수, 위험 동작 수 등)
 def lift_kpis(lifts, df, fps):
     return {'video_s': round(len(df) / fps, 1),
             'lifts': len(lifts),
             'stoop_lifts': int((lifts['lift_type'] == 'STOOP').sum()),
             'squat_lifts': int((lifts['lift_type'] == 'SQUAT').sum()),
             'high_risk_lifts': int((lifts['risk_grade'] == 'HIGH').sum()),
-            'avg_risk': round(float(lifts['risk_score'].mean()), 1) if len(lifts) else 0.0,
-            'stoop_time_s': round(float((df['state'] == 'STOOP').sum() / fps), 1)}
+            'avg_risk': round(float(lifts['risk_score'].mean()), 1) if len(lifts) else 0.0,  # 동작이 없으면 0
+            'stoop_time_s': round(float((df['state'] == 'STOOP').sum() / fps), 1)}  # STOOP 프레임 수 ÷ fps
 
 KPI = lift_kpis(lifts, ang, FPS)
-display(pd.DataFrame([KPI]))
+display(pd.DataFrame([KPI]))  # dict 1개 → 1행 표
 
 fig = plt.figure(figsize=(12, 6.2))
-gs = fig.add_gridspec(2, 3, height_ratios=[1.3, 1])
-ax_t = fig.add_subplot(gs[0, :]); plot_lift_timeline(ang, lifts, ax_t)
+gs = fig.add_gridspec(2, 3, height_ratios=[1.3, 1])  # 2행×3열 칸, 위 행을 조금 더 높게
+ax_t = fig.add_subplot(gs[0, :]); plot_lift_timeline(ang, lifts, ax_t)  # 위: 한 줄 전체에 동작 그래프
 ax_t.set_title(f"Lift report | {KPI['lifts']} lifts, {KPI['stoop_lifts']} stoop, "
                f"{KPI['high_risk_lifts']} high risk | stoop time {KPI['stoop_time_s']} s")
-ax_b = fig.add_subplot(gs[1, :2])
+ax_b = fig.add_subplot(gs[1, :2])  # 아래 왼쪽 2칸: 동작별 위험 점수
 if len(lifts):
     ax_b.bar(lifts['lift_id'].astype(str), lifts['risk_score'], color=[GRADE_HEX[g] for g in lifts['risk_grade']])
 else:
     ax_b.text(0.5, 50, 'no lifts detected', ha='center', color='gray')
-ax_b.axhline(LIFT_RULES['high_risk'], ls='--', c='red', lw=1); ax_b.axhline(LIFT_RULES['medium_risk'], ls='--', c='orange', lw=1)
+ax_b.axhline(LIFT_RULES['high_risk'], ls='--', c='red', lw=1); ax_b.axhline(LIFT_RULES['medium_risk'], ls='--', c='orange', lw=1)  # 70점·40점 기준선
 ax_b.set_ylim(0, 100); ax_b.set_xlabel('lift #'); ax_b.set_ylabel('risk score'); ax_b.set_title('Risk per lift')
-ax_p = fig.add_subplot(gs[1, 2])
-type_counts = lifts['lift_type'].value_counts().reindex(['STOOP', 'BENDING', 'SQUAT'], fill_value=0)
+ax_p = fig.add_subplot(gs[1, 2])  # 아래 오른쪽 1칸: 유형별 동작 수
+type_counts = lifts['lift_type'].value_counts().reindex(['STOOP', 'BENDING', 'SQUAT'], fill_value=0)  # 없는 유형도 0으로
 ax_p.barh(type_counts.index, type_counts.values, color=['#e53935', '#ffb300', '#26a69a'])
 ax_p.set_title('Lifts by type'); ax_p.set_xlabel('count')
-plt.tight_layout(); plt.savefig('lift_report.png', dpi=120); save_out('lift_report.png'); plt.show()
+plt.tight_layout(); plt.savefig('lift_report.png', dpi=120); save_out('lift_report.png'); plt.show()  # 그림 파일 저장 + Drive 복사
 ```
 
 **코드 설명**
@@ -1054,14 +1097,14 @@ video_s, lifts, stoop_lifts, squat_lifts, high_risk_lifts, avg_risk, stoop_time_
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
-| 셀 7에서 '파일을 찾지 못했습니다' AssertionError가 납니다. | lift_sample.mp4가 현재 폴더와 저장 폴더 어디에도 없고, 파일 선택 창에서 업로드하지 않았습니다. | 셀 7을 다시 실행해 파일 선택 창에서 실습 영상을 고르거나, Drive의 MyDrive/yolo_day2 폴더에 lift_sample.mp4를 넣고 다시 실행합니다. |
+| 셀 5에서 '파일을 찾지 못했습니다' AssertionError가 납니다. | lift_sample.mp4가 현재 폴더와 저장 폴더 어디에도 없고, 파일 선택 창에서 업로드하지 않았습니다. | 셀 5을 다시 실행해 파일 선택 창에서 실습 영상을 고르거나, Drive의 MyDrive/yolo_day2 폴더에 lift_sample.mp4를 넣고 다시 실행합니다. |
 | Step 3 자세 상태가 거의 모두 NOT_STANDING으로 나옵니다. | 정강이 기울기가 60°를 넘는 프레임이 대부분입니다. 엎드리거나 누운 자세의 영상이거나, 다리 관절을 잘못 잡았습니다. | 작업자가 서서 상자를 드는 영상인지 확인합니다. Step 1 그림에서 무릎·발목 위치가 맞는지 보고, 맞지 않으면 다리가 잘 보이게 다시 촬영합니다. |
 | UNKNOWN 프레임이 많고 각도를 구하지 못한 비율이 높습니다. | 어깨·엉덩이·무릎·발목 중 하나라도 신뢰도가 0.3 미만이면 각도를 계산하지 않습니다. 다리가 상자나 화면 밖에 가려졌을 때 생깁니다. | 머리부터 발끝까지 화면에 들어오게 촬영합니다. 영상을 바꿀 수 없다면 body_angles()의 min_conf를 조금 낮춰 비교해 봅니다. |
 | '들기 동작이 없습니다.'가 출력되고 lift_events.csv가 비어 있습니다. | 몸통 기울기가 start_trunk(30°)를 넘는 구간이 없거나, 동작 구간이 0.5초보다 짧아 버려졌습니다. | Step 2 그래프에서 trunk 최댓값을 확인합니다. 정면에서 찍은 영상이면 몸통 기울기가 작게 보이므로 옆에서 다시 찍습니다. |
 | 무릎을 굽혀 들었는데 STOOP으로 판정됩니다. | 카메라가 정면 쪽으로 돌아가 있으면 무릎 굽힘이 화면에 작게 투영되어 무릎 각도가 150° 이상으로 계산됩니다. | lift_events.csv의 knee_at_bottom_deg를 확인합니다. 카메라를 작업자 바로 옆, 허리 높이에 두고 다시 촬영하는 것이 가장 확실합니다. |
 | 한 번 들었는데 동작이 두 개로 쪼개져 나옵니다. | 동작 도중 몸통 기울기가 잠깐 20° 아래로 내려갔다가 다시 30°를 넘었습니다. 흔들림이 크거나 기준값이 동작과 맞지 않을 때 생깁니다. | SMOOTH_WIN을 조금 키우거나 end_trunk를 낮춰 봅니다. 바꾼 뒤에는 Step 4-3 가상 작업자 검증이 여전히 통과하는지 확인합니다. |
 | 노트북 안에서 영상이 재생되지 않습니다. | OpenCV의 mp4v 코덱 영상은 브라우저가 재생하지 못합니다. show_video()의 H.264 변환이 실패했을 수 있습니다. | show_video() 실행 중 ffmpeg 오류가 있는지 확인합니다. 저장 폴더의 mp4 파일을 내려받아 컴퓨터의 플레이어로 재생해도 됩니다. |
-| Step 2 영상 분석 셀이 매우 오래 걸립니다. | CPU 런타임으로 실행 중이거나 영상이 깁니다. | 셀 3에서 GPU 사용 가능이 True인지 확인합니다. False면 런타임 유형을 T4 GPU로 바꾸고 처음부터 다시 실행합니다. |
+| Step 2 영상 분석 셀이 매우 오래 걸립니다. | CPU 런타임으로 실행 중이거나 영상이 깁니다. | 셀 2에서 GPU 사용 가능이 True인지 확인합니다. False면 런타임 유형을 T4 GPU로 바꾸고 처음부터 다시 실행합니다. |
 
 ## 용어 정리
 

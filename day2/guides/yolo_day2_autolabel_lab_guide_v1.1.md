@@ -1,6 +1,6 @@
 # YOLO 2회차 추가 실습 — 오토 라벨링 공장
 
-노트북: [`yolo_day2_autolabel_lab_v1.0.ipynb`](../yolo_day2_autolabel_lab_v1.0.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_autolabel_lab_v1.0.ipynb)
+노트북: [`yolo_day2_autolabel_lab_v1.1.ipynb`](../yolo_day2_autolabel_lab_v1.1.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_autolabel_lab_v1.1.ipynb)
 
 | 항목 | 내용 |
 |---|---|
@@ -51,7 +51,10 @@
 ### 셀 1. Ultralytics와 CLIP 패키지 설치
 
 ```python
+# !로 시작하는 줄은 파이썬이 아닌 셸 명령
+# YOLO·YOLOE 모델과 학습·평가 도구 설치 (-q: 설치 메시지 줄임)
 !pip -q install ultralytics
+# YOLOE가 단어를 벡터로 바꿀 때 쓰는 CLIP 패키지 설치
 !pip -q install git+https://github.com/ultralytics/CLIP.git
 ```
 
@@ -70,9 +73,10 @@
 ### 셀 2. 라이브러리 불러오기, Drive 연결, 저장 폴더와 도우미 함수 정의
 
 ```python
+# 필요한 라이브러리 불러오기
 import os, json, time, shutil
 from pathlib import Path
-from collections import Counter
+from collections import Counter  # 항목별 개수를 세는 도구
 
 import cv2
 import numpy as np
@@ -80,40 +84,43 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import torch
 from IPython.display import display
-from ultralytics import YOLO, YOLOE
-from ultralytics.data.utils import check_det_dataset
+from ultralytics import YOLO, YOLOE  # YOLO: 학습할 모델, YOLOE: 라벨링에 쓸 모델
+from ultralytics.data.utils import check_det_dataset  # 데이터셋 내려받기 + 경로·클래스 정보 반환
 
-print('GPU 사용 가능:', torch.cuda.is_available())
+print('GPU 사용 가능:', torch.cuda.is_available())  # T4 GPU 런타임이면 True
 
+# Colab에서만 성공하는 import로 실행 환경 구분
 try:
     from google.colab import drive
     IN_COLAB = True
 except ImportError:
     IN_COLAB = False
 
-USE_DRIVE = True
+USE_DRIVE = True  # False: Drive 대신 로컬 outputs/autolabel에 저장
 if IN_COLAB and USE_DRIVE:
-    drive.mount('/content/drive')
-    SAVE_DIR = Path('/content/drive/MyDrive/yolo_day2/autolabel')
+    drive.mount('/content/drive')  # Google 계정 권한 창이 뜨면 허용
+    SAVE_DIR = Path('/content/drive/MyDrive/yolo_day2/autolabel')  # 결과 파일을 모을 Drive 폴더
 else:
     SAVE_DIR = Path('outputs/autolabel')
-SAVE_DIR.mkdir(parents=True, exist_ok=True)
-WORK = Path('ppe3')            # 이 실습에서 만드는 데이터셋 폴더 (런타임 로컬 디스크)
+SAVE_DIR.mkdir(parents=True, exist_ok=True)  # 상위 폴더까지 생성, 이미 있어도 오류 없음
+WORK = Path('ppe3')            # 데이터셋 3개(human·auto·hybrid)를 만들 폴더 (런타임 로컬 디스크)
 print('결과 저장 위치:', SAVE_DIR.resolve())
 
+# 결과 파일을 SAVE_DIR(Drive)로 복사하고 복사된 경로 반환
 def save_out(path):
     dst = SAVE_DIR / Path(path).name
-    if Path(path).resolve() != dst.resolve():
+    if Path(path).resolve() != dst.resolve():  # 이미 같은 파일이면 복사 생략
         shutil.copy(path, dst)
     return dst
 
+# OpenCV BGR 이미지 여러 장을 cols열 격자로 표시
 def show_grid(imgs, titles=None, cols=3, size=4):
-    rows = (len(imgs) + cols - 1) // cols
+    rows = (len(imgs) + cols - 1) // cols  # 필요한 행 수 (올림 나눗셈)
     fig, axes = plt.subplots(rows, cols, figsize=(size * cols, size * rows))
-    for ax, i in zip(np.array(axes).ravel(), range(rows * cols)):
-        ax.axis('off')
+    for ax, i in zip(np.array(axes).ravel(), range(rows * cols)):  # 2차원 칸 배열을 한 줄로 펴서 차례로 채움
+        ax.axis('off')  # 축 눈금 숨김 (남는 칸은 빈칸으로)
         if i < len(imgs):
-            ax.imshow(imgs[i][..., ::-1])
+            ax.imshow(imgs[i][..., ::-1])  # [..., ::-1]: 채널 순서 BGR → RGB로 뒤집기
             if titles:
                 ax.set_title(titles[i], fontsize=9)
     plt.tight_layout(); plt.show()
@@ -140,7 +147,9 @@ def show_grid(imgs, titles=None, cols=3, size=4):
 
 ```python
 # 학습 설정 — 시간이 부족하면 QUICK_RUN = True
-QUICK_RUN = False
+QUICK_RUN = False  # True: 빨리 끝나지만 정확도가 낮아질 수 있음
+# 학습 3번(사람·자동·하이브리드) 모두 같은 CFG → 라벨만 다른 비교
+# epochs: 학습 데이터 반복 횟수, imgsz: 입력 크기, batch: 한 번에 넣는 장수
 CFG = dict(epochs=30, imgsz=640, batch=16) if not QUICK_RUN else dict(epochs=5, imgsz=416, batch=16)
 print(CFG)
 ```
@@ -173,32 +182,34 @@ YOLO 라벨은 이미지마다 같은 이름의 .txt 파일입니다. 한 줄에
 ### 셀 4. 데이터셋을 내려받고 3종 클래스만 남긴 사람 라벨 데이터셋 만들기
 
 ```python
-PPE = check_det_dataset('construction-ppe.yaml')
-SRC = Path(PPE['path'])
+PPE = check_det_dataset('construction-ppe.yaml')  # 데이터셋 내려받기 (처음 한 번)
+SRC = Path(PPE['path'])  # 원본 데이터셋 최상위 폴더
 print('원본 클래스:', PPE['names'])
 
-TARGET = {0: 'helmet', 1: 'vest', 2: 'person'}
-SRC_TO_NEW = {0: 0, 2: 1, 6: 2}
-PROMPTS = {0: 'helmet', 1: 'safety vest', 2: 'person'}
-SPLITS = ['train', 'val', 'test']
+# 번호 변환표: 원본 11종 중 3종만 새 번호 0·1·2로
+TARGET = {0: 'helmet', 1: 'vest', 2: 'person'}  # 새 번호 → 이름
+SRC_TO_NEW = {0: 0, 2: 1, 6: 2}  # 원본 번호 → 새 번호 (helmet 0, vest 2, Person 6)
+PROMPTS = {0: 'helmet', 1: 'safety vest', 2: 'person'}  # 새 번호 → YOLOE에게 줄 단어
+SPLITS = ['train', 'val', 'test']  # 학습·검증·테스트 분할
 
 def read_labels(path, mapping=None):
     """YOLO 라벨 파일 → [(클래스, cx, cy, w, h)]. mapping이 있으면 번호를 바꾸고 나머지는 버림"""
     out = []
-    if Path(path).exists():
+    if Path(path).exists():  # 라벨 파일이 없으면 빈 목록 반환
         for line in Path(path).read_text().strip().splitlines():
-            c, *v = line.split()
+            c, *v = line.split()  # 첫 값은 클래스, 나머지(*v)는 좌표 목록
             c = int(c)
             if mapping is not None:
-                if c not in mapping:
+                if c not in mapping:  # 3종에 없는 클래스는 버림
                     continue
-                c = mapping[c]
-            out.append((c, *map(float, v[:4])))
+                c = mapping[c]  # 원본 번호 → 새 번호
+            out.append((c, *map(float, v[:4])))  # (클래스, cx, cy, w, h) — 좌표는 실수로
     return out
 
+# 라벨 목록을 YOLO 형식 텍스트로 저장 (한 줄에 박스 하나)
 def write_labels(path, labels):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(''.join(f'{c} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n' for c, cx, cy, w, h in labels))
+    Path(path).write_text(''.join(f'{c} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n' for c, cx, cy, w, h in labels))  # 소수 6자리, 빈 목록이면 빈 파일(배경 이미지)
 
 def link_images(dst_root):
     """원본 이미지를 복사하지 않고 바로가기(심볼릭 링크)로 연결"""
@@ -206,26 +217,29 @@ def link_images(dst_root):
         d = dst_root / 'images' / split
         d.mkdir(parents=True, exist_ok=True)
         for p in (SRC / 'images' / split).iterdir():
-            if not (d / p.name).exists():
-                os.symlink(p.resolve(), d / p.name)
+            if not (d / p.name).exists():  # 이미 연결된 파일은 건너뜀
+                os.symlink(p.resolve(), d / p.name)  # 원본을 가리키는 바로가기 생성
 
+# 데이터셋 설정(data.yaml)을 쓰고 경로 반환 — JSON도 YAML로 읽힘
 def write_yaml(root):
     cfg = {'path': str(root.resolve()), 'train': 'images/train', 'val': 'images/val',
-           'test': 'images/test', 'names': TARGET}
+           'test': 'images/test', 'names': TARGET}  # names: 새 번호 → 이름
     yml = root / 'data.yaml'
     yml.write_text(json.dumps(cfg))
     return str(yml)
 
-HUMAN = WORK / 'human'
+# 사람 라벨 데이터셋: 원본 라벨을 새 번호로 바꿔 저장
+HUMAN = WORK / 'human'  # ppe3/human
 link_images(HUMAN)
 for split in SPLITS:
     for p in (SRC / 'images' / split).iterdir():
-        labels = read_labels(SRC / 'labels' / split / (p.stem + '.txt'), SRC_TO_NEW)
+        labels = read_labels(SRC / 'labels' / split / (p.stem + '.txt'), SRC_TO_NEW)  # 3종만 남기고 새 번호로
         write_labels(HUMAN / 'labels' / split / (p.stem + '.txt'), labels)
 HUMAN_YAML = write_yaml(HUMAN)
 
+# 학습 라벨의 클래스별 박스 수 세기
 TRAIN_IMAGES = sorted((HUMAN / 'images' / 'train').iterdir())
-cnt = Counter(c for p in TRAIN_IMAGES for c, *_ in read_labels(HUMAN / 'labels' / 'train' / (p.stem + '.txt')))
+cnt = Counter(c for p in TRAIN_IMAGES for c, *_ in read_labels(HUMAN / 'labels' / 'train' / (p.stem + '.txt')))  # 박스마다 클래스 번호만 꺼내 개수 집계
 print('학습 이미지:', len(TRAIN_IMAGES), '장')
 pd.DataFrame([{'class': TARGET[k], 'human_boxes': cnt[k]} for k in TARGET])
 ```
@@ -262,20 +276,22 @@ YOLOE는 set_classes()로 받은 단어를 텍스트 벡터로 바꾸고, 이미
 ### 셀 5. YOLOE로 학습 이미지 전체를 예측해 예측 캐시 만들기
 
 ```python
-labeler = YOLOE('yoloe-26s-seg.pt')
+labeler = YOLOE('yoloe-26s-seg.pt')  # 라벨링 담당 YOLOE s 모델 (없으면 자동 다운로드)
 labeler.set_classes([PROMPTS[k] for k in sorted(PROMPTS)])     # 결과 클래스 번호 = PROMPTS 순서 = 새 번호
 
+# 학습 이미지 전체를 예측해 예측 캐시(CACHE)에 저장, 걸린 시간 측정
 t0 = time.time()
-CACHE = {}
+CACHE = {}  # {파일 이름: [(클래스, 신뢰도, cx, cy, w, h), ...]}
 for p in TRAIN_IMAGES:
-    r = labeler.predict(str(p), conf=0.05, verbose=False)[0]
-    h, w = r.orig_shape
+    r = labeler.predict(str(p), conf=0.05, verbose=False)[0]  # conf=0.05: 낮은 점수 후보까지 모두 남김
+    h, w = r.orig_shape  # 원본 이미지 (높이, 너비) — 높이가 먼저
     preds = []
+    # xyxy: 꼭짓점 픽셀 좌표, cls: 클래스 번호, conf: 신뢰도
     for (x1, y1, x2, y2), c, cf in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.cls.cpu().numpy().astype(int),
                                        r.boxes.conf.cpu().numpy()):
-        preds.append((int(c), float(cf), (x1 + x2) / 2 / w, (y1 + y2) / 2 / h, (x2 - x1) / w, (y2 - y1) / h))
-    CACHE[p.stem] = preds
-AUTO_SEC = time.time() - t0
+        preds.append((int(c), float(cf), (x1 + x2) / 2 / w, (y1 + y2) / 2 / h, (x2 - x1) / w, (y2 - y1) / h))  # 픽셀 좌표 → YOLO 형식(중심·너비·높이, 0~1)
+    CACHE[p.stem] = preds  # stem: 확장자를 뺀 파일 이름
+AUTO_SEC = time.time() - t0  # 자동 라벨링에 걸린 전체 시간(초)
 print(f'자동 라벨링: {len(CACHE)}장, {AUTO_SEC:.0f}초 (이미지당 {AUTO_SEC / len(CACHE) * 1000:.0f}ms)')
 ```
 
@@ -311,47 +327,50 @@ print(f'자동 라벨링: {len(CACHE)}장, {AUTO_SEC:.0f}초 (이미지당 {AUTO
 ### 셀 6. IoU 매칭 함수 정의와 신뢰도 기준별 정밀도·재현율·F1 계산
 
 ```python
+# (cx, cy, w, h) → 꼭짓점 좌표 (x1, y1, x2, y2)
 def to_xyxy(b):
     cx, cy, w, h = b
     return np.array([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2])
 
+# 두 박스(x1, y1, x2, y2)의 IoU = 겹친 넓이 ÷ 합친 넓이
 def iou(a, b):
-    x1, y1 = max(a[0], b[0]), max(a[1], b[1]); x2, y2 = min(a[2], b[2]), min(a[3], b[3])
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter + 1e-9)
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1]); x2, y2 = min(a[2], b[2]), min(a[3], b[3])  # 겹친 영역: 왼쪽 위는 max, 오른쪽 아래는 min
+    inter = max(0, x2 - x1) * max(0, y2 - y1)  # 안 겹치면 0
+    return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter + 1e-9)  # 1e-9: 0으로 나누기 방지
 
 def match_counts(auto, human, cls):
     """한 이미지, 한 클래스의 (일치 수, 자동 라벨 수, 사람 라벨 수)"""
-    A = [to_xyxy(a[2:]) for a in sorted(auto, key=lambda a: -a[1]) if a[0] == cls]
-    Hb = [to_xyxy(h[1:]) for h in human if h[0] == cls]
-    used, tp = set(), 0
+    A = [to_xyxy(a[2:]) for a in sorted(auto, key=lambda a: -a[1]) if a[0] == cls]  # 해당 클래스 자동 박스, 신뢰도 높은 순
+    Hb = [to_xyxy(h[1:]) for h in human if h[0] == cls]  # 해당 클래스 사람 박스
+    used, tp = set(), 0  # used: 이미 짝지은 사람 박스 번호
     for a in A:
         best, j = 0, -1
         for k, hb in enumerate(Hb):
-            if k not in used and iou(a, hb) > best:
+            if k not in used and iou(a, hb) > best:  # 짝 없는 사람 박스 중 가장 많이 겹치는 것
                 best, j = iou(a, hb), k
-        if best >= 0.5:
+        if best >= 0.5:  # IoU 0.5 이상이면 일치로 셈
             used.add(j); tp += 1
     return tp, len(A), len(Hb)
 
-HUMAN_TRAIN = {p.stem: read_labels(HUMAN / 'labels' / 'train' / (p.stem + '.txt')) for p in TRAIN_IMAGES}
+HUMAN_TRAIN = {p.stem: read_labels(HUMAN / 'labels' / 'train' / (p.stem + '.txt')) for p in TRAIN_IMAGES}  # 학습 이미지별 사람 라벨 (Step 5에서도 사용)
 
+# 신뢰도 기준(thr)별·클래스별 정밀도·재현율·F1 계산
 rows = []
-for thr in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]:
+for thr in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]:  # 비교할 신뢰도 기준
     for c in TARGET:
         tp = na = nh = 0
         for stem, preds in CACHE.items():
-            t, a, h = match_counts([p for p in preds if p[1] >= thr], HUMAN_TRAIN[stem], c)
+            t, a, h = match_counts([p for p in preds if p[1] >= thr], HUMAN_TRAIN[stem], c)  # 기준 이상 후보만 남겨 비교
             tp += t; na += a; nh += h
-        prec, rec = tp / max(na, 1), tp / max(nh, 1)
+        prec, rec = tp / max(na, 1), tp / max(nh, 1)  # 정밀도, 재현율 (max(..., 1): 0 나누기 방지)
         rows.append({'conf': thr, 'class': TARGET[c], 'auto_boxes': na, 'precision': round(prec, 3),
-                     'recall': round(rec, 3), 'f1': round(2 * prec * rec / max(prec + rec, 1e-9), 3)})
+                     'recall': round(rec, 3), 'f1': round(2 * prec * rec / max(prec + rec, 1e-9), 3)})  # F1 = 정밀도·재현율의 조화 평균
 quality = pd.DataFrame(rows)
 
-mean_f1 = quality.groupby('conf')['f1'].mean()
-AUTO_CONF = float(mean_f1.idxmax())
+mean_f1 = quality.groupby('conf')['f1'].mean()  # 기준별로 세 클래스 F1 평균
+AUTO_CONF = float(mean_f1.idxmax())  # 평균 F1이 가장 높은 기준 선택
 print('클래스 평균 F1이 가장 높은 신뢰도 기준:', AUTO_CONF)
-quality[quality['conf'] == AUTO_CONF]
+quality[quality['conf'] == AUTO_CONF]  # 고른 기준의 행만 표시
 ```
 
 **코드 설명**
@@ -376,9 +395,9 @@ quality[quality['conf'] == AUTO_CONF]
 ```python
 plt.figure(figsize=(8, 3.5))
 for c in TARGET.values():
-    q = quality[quality['class'] == c]
-    plt.plot(q['conf'], q['f1'], '-o', label=c)
-plt.axvline(AUTO_CONF, ls='--', c='gray')
+    q = quality[quality['class'] == c]  # 이 클래스 행만 골라냄
+    plt.plot(q['conf'], q['f1'], '-o', label=c)  # x: 신뢰도 기준, y: F1, '-o': 점+선
+plt.axvline(AUTO_CONF, ls='--', c='gray')  # 고른 기준 위치에 세로 점선
 plt.xlabel('confidence threshold for auto labels'); plt.ylabel('F1 vs human labels'); plt.ylim(0, 1)
 plt.title('Auto-label quality by class'); plt.legend(); plt.grid(alpha=.3); plt.show()
 ```
@@ -400,24 +419,26 @@ plt.title('Auto-label quality by class'); plt.legend(); plt.grid(alpha=.3); plt.
 
 ```python
 # 자동 라벨(왼쪽)과 사람 라벨(오른쪽) 나란히 보기 — 차이가 큰 이미지 3장
-COLORS = {0: (0, 220, 255), 1: (0, 140, 255), 2: (255, 120, 0)}
+COLORS = {0: (0, 220, 255), 1: (0, 140, 255), 2: (255, 120, 0)}  # 클래스별 색 (BGR 순서: helmet 노랑, vest 주황, person 파랑)
 
+# 라벨 박스를 이미지에 그림 (has_conf: 신뢰도 값 포함 여부)
 def draw_labels(img, labels, has_conf):
-    h, w = img.shape[:2]
+    h, w = img.shape[:2]  # 이미지 (높이, 너비)
     for lab in labels:
-        c, box = lab[0], lab[2:] if has_conf else lab[1:]
-        x1, y1, x2, y2 = (to_xyxy(box) * [w, h, w, h]).astype(int)
+        c, box = lab[0], lab[2:] if has_conf else lab[1:]  # 자동 라벨은 2번째 값이 신뢰도 → [2:]부터 좌표
+        x1, y1, x2, y2 = (to_xyxy(box) * [w, h, w, h]).astype(int)  # 0~1 좌표 → 픽셀 좌표
         cv2.rectangle(img, (x1, y1), (x2, y2), COLORS[c], 2)
-        cv2.putText(img, TARGET[c], (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS[c], 2)
+        cv2.putText(img, TARGET[c], (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS[c], 2)  # max(12, ...): 글자가 위로 잘리지 않게
     return img
 
+# 자동 박스 수와 사람 박스 수 차이가 큰 이미지 3장 고르기
 diff = sorted(CACHE, key=lambda s: -abs(len([p for p in CACHE[s] if p[1] >= AUTO_CONF]) - len(HUMAN_TRAIN[s])))[:3]
 imgs, titles = [], []
 for stem in diff:
-    p = next(x for x in TRAIN_IMAGES if x.stem == stem)
+    p = next(x for x in TRAIN_IMAGES if x.stem == stem)  # 파일 이름으로 이미지 경로 찾기
     img = cv2.imread(str(p))
-    auto = [a for a in CACHE[stem] if a[1] >= AUTO_CONF]
-    imgs += [draw_labels(img.copy(), auto, True), draw_labels(img.copy(), HUMAN_TRAIN[stem], False)]
+    auto = [a for a in CACHE[stem] if a[1] >= AUTO_CONF]  # 기준 이상 자동 라벨만
+    imgs += [draw_labels(img.copy(), auto, True), draw_labels(img.copy(), HUMAN_TRAIN[stem], False)]  # 복사본에 각각 그림: 왼쪽 자동, 오른쪽 사람
     titles += [f'AUTO {len(auto)} boxes', f'HUMAN {len(HUMAN_TRAIN[stem])} boxes']
 show_grid(imgs, titles, cols=2, size=4.5)
 ```
@@ -441,20 +462,21 @@ show_grid(imgs, titles, cols=2, size=4.5)
 ### 셀 9. 학습 라벨만 자동 라벨로 바꾼 데이터셋(ppe3/auto) 만들기
 
 ```python
+# 학습 라벨만 바꾼 데이터셋 만들기 (val·test는 사람 라벨), data.yaml 경로 반환
 def build_dataset(root, train_labels):
-    link_images(root)
+    link_images(root)  # 이미지는 바로가기로 연결
     for stem, labels in train_labels.items():
-        write_labels(root / 'labels' / 'train' / (stem + '.txt'), labels)
+        write_labels(root / 'labels' / 'train' / (stem + '.txt'), labels)  # 학습 라벨은 인자로 받은 것
     for split in ['val', 'test']:
         d = root / 'labels' / split
         d.mkdir(parents=True, exist_ok=True)
         for f in (HUMAN / 'labels' / split).glob('*.txt'):
-            shutil.copy(f, d / f.name)
+            shutil.copy(f, d / f.name)  # 검증·테스트 라벨은 사람 라벨 그대로
     return write_yaml(root)
 
-AUTO_LABELS = {s: [(c, *b) for c, cf, *b in preds if cf >= AUTO_CONF] for s, preds in CACHE.items()}
-AUTO_YAML = build_dataset(WORK / 'auto', AUTO_LABELS)
-n_auto = sum(len(v) for v in AUTO_LABELS.values())
+AUTO_LABELS = {s: [(c, *b) for c, cf, *b in preds if cf >= AUTO_CONF] for s, preds in CACHE.items()}  # 기준 이상만 남기고 신뢰도(cf)는 뺌
+AUTO_YAML = build_dataset(WORK / 'auto', AUTO_LABELS)  # ppe3/auto 데이터셋
+n_auto = sum(len(v) for v in AUTO_LABELS.values())  # 자동 라벨 박스 총수
 print(f'자동 라벨 박스 {n_auto}개 (사람 라벨 {sum(cnt.values())}개) →', AUTO_YAML)
 ```
 
@@ -486,22 +508,23 @@ print(f'자동 라벨 박스 {n_auto}개 (사람 라벨 {sum(cnt.values())}개) 
 ### 셀 10. 학습·테스트 함수(train_and_test) 정의와 사람 라벨·자동 라벨 모델 대결
 
 ```python
+# yaml_path 데이터셋으로 학습 → 사람 라벨 test로 평가, 성적 한 행(dict) 반환
 def train_and_test(yaml_path, name):
-    m = YOLO('yolo26n.pt')
+    m = YOLO('yolo26n.pt')  # 매번 새 사전학습 모델 (이전 학습 결과 섞이지 않게)
     t0 = time.time()
-    m.train(data=yaml_path, epochs=CFG['epochs'], imgsz=CFG['imgsz'], batch=CFG['batch'],
-            project='runs_autolabel', name=name, exist_ok=True, seed=0, verbose=False, plots=False)
-    minutes = (time.time() - t0) / 60
-    best = YOLO(Path(m.trainer.save_dir) / 'weights' / 'best.pt')
-    res = best.val(data=yaml_path, split='test', imgsz=CFG['imgsz'], batch=CFG['batch'], verbose=False, plots=False)
+    m.train(data=yaml_path, epochs=CFG['epochs'], imgsz=CFG['imgsz'], batch=CFG['batch'],  # CFG 값으로 학습
+            project='runs_autolabel', name=name, exist_ok=True, seed=0, verbose=False, plots=False)  # seed=0: 무작위 고정, exist_ok: 같은 폴더 덮어씀
+    minutes = (time.time() - t0) / 60  # 학습 시간(분)
+    best = YOLO(Path(m.trainer.save_dir) / 'weights' / 'best.pt')  # val 점수가 가장 좋았던 가중치
+    res = best.val(data=yaml_path, split='test', imgsz=CFG['imgsz'], batch=CFG['batch'], verbose=False, plots=False)  # test 분할(사람 라벨)로 평가
     row = {'labels': name, 'train_min': round(minutes, 1), 'map50': round(res.box.map50, 3),
-           'map50_95': round(res.box.map, 3)}
+           'map50_95': round(res.box.map, 3)}  # res.box.map = mAP50-95
     ap = dict(zip(res.box.ap_class_index.tolist(), res.box.ap50.tolist()))   # 클래스 번호 → AP50
     for i, c in TARGET.items():
-        row[f'ap50_{c}'] = round(ap.get(i, 0.0), 3)
+        row[f'ap50_{c}'] = round(ap.get(i, 0.0), 3)  # test에 없는 클래스는 0
     return row
 
-battle = [train_and_test(HUMAN_YAML, 'human'), train_and_test(AUTO_YAML, 'auto')]
+battle = [train_and_test(HUMAN_YAML, 'human'), train_and_test(AUTO_YAML, 'auto')]  # 사람 라벨 vs 자동 라벨, 학습 2번
 pd.DataFrame(battle)
 ```
 
@@ -537,20 +560,20 @@ AUTO_CONF 이상 REVIEW_CONF(0.6) 미만인 박스는 모델도 확신하지 못
 ### 셀 11. 검수 대상 이미지 고르기, 하이브리드 데이터셋 학습, 성능표 저장
 
 ```python
-REVIEW_CONF = 0.6
-RUN_HYBRID = True
+REVIEW_CONF = 0.6  # 이 값 이상은 믿고 그대로 사용 (올리면 검수 이미지 늘어남)
+RUN_HYBRID = True  # False: 하이브리드 학습 생략 (표·그림에서 hybrid 빠짐)
 
-review = [s for s, preds in CACHE.items() if any(AUTO_CONF <= p[1] < REVIEW_CONF for p in preds)]
+review = [s for s, preds in CACHE.items() if any(AUTO_CONF <= p[1] < REVIEW_CONF for p in preds)]  # 애매한 박스가 하나라도 있는 이미지 = 검수 대상
 print(f'검수 대상 이미지: {len(review)} / {len(CACHE)} ({len(review) / len(CACHE) * 100:.0f}%)')
 
 battle = [b for b in battle if b['labels'] != 'hybrid']   # 이 셀을 다시 실행해도 hybrid 행이 겹치지 않게
 if RUN_HYBRID:
-    HYB_LABELS = {s: (HUMAN_TRAIN[s] if s in review else AUTO_LABELS[s]) for s in CACHE}
-    HYB_YAML = build_dataset(WORK / 'hybrid', HYB_LABELS)
-    battle.append(train_and_test(HYB_YAML, 'hybrid'))
+    HYB_LABELS = {s: (HUMAN_TRAIN[s] if s in review else AUTO_LABELS[s]) for s in CACHE}  # 검수 대상은 사람 라벨, 나머지는 자동 라벨
+    HYB_YAML = build_dataset(WORK / 'hybrid', HYB_LABELS)  # ppe3/hybrid 데이터셋
+    battle.append(train_and_test(HYB_YAML, 'hybrid'))  # 같은 조건으로 세 번째 학습·평가
 
 battle_df = pd.DataFrame(battle)
-battle_df.to_csv('label_battle.csv', index=False); save_out('label_battle.csv')
+battle_df.to_csv('label_battle.csv', index=False); save_out('label_battle.csv')  # CSV 저장 후 Drive로 복사
 battle_df
 ```
 
@@ -573,18 +596,18 @@ battle_df
 ### 셀 12. 라벨 방식별 라벨링 시간과 성능 비율 계산 (label_cost.csv)
 
 ```python
-SEC_PER_BOX = 7       # 가정값 — 바꿔 보세요
-SEC_PER_REVIEW = 20   # 가정값 — 바꿔 보세요
+SEC_PER_BOX = 7       # 가정값: 박스 1개 그리는 시간(초) — 늘리면 사람 라벨 비용 증가
+SEC_PER_REVIEW = 20   # 가정값: 이미지 1장 검수 시간(초) — 하이브리드 비용에 반영
 
-human_boxes = sum(len(v) for v in HUMAN_TRAIN.values())
+human_boxes = sum(len(v) for v in HUMAN_TRAIN.values())  # 학습 이미지의 사람 라벨 박스 총수
 cost = pd.DataFrame([
-    {'labels': 'human', 'label_hours': round(human_boxes * SEC_PER_BOX / 3600, 2)},
-    {'labels': 'auto', 'label_hours': round(AUTO_SEC / 3600, 2)},
-    {'labels': 'hybrid', 'label_hours': round((AUTO_SEC + len(review) * SEC_PER_REVIEW) / 3600, 2)},
-]).merge(battle_df[['labels', 'map50']], on='labels')
-base = cost.loc[cost['labels'] == 'human', 'map50'].iloc[0]
-cost['map50_vs_human'] = (cost['map50'] / base).round(3)
-cost.to_csv('label_cost.csv', index=False); save_out('label_cost.csv')
+    {'labels': 'human', 'label_hours': round(human_boxes * SEC_PER_BOX / 3600, 2)},  # 박스 수 × 박스당 초 ÷ 3600 → 시간
+    {'labels': 'auto', 'label_hours': round(AUTO_SEC / 3600, 2)},  # 실제로 잰 YOLOE 실행 시간
+    {'labels': 'hybrid', 'label_hours': round((AUTO_SEC + len(review) * SEC_PER_REVIEW) / 3600, 2)},  # 자동 라벨 시간 + 검수 시간
+]).merge(battle_df[['labels', 'map50']], on='labels')  # 성능표의 map50을 라벨 방식 이름으로 붙임
+base = cost.loc[cost['labels'] == 'human', 'map50'].iloc[0]  # 사람 라벨 모델의 mAP50 (기준 1.0)
+cost['map50_vs_human'] = (cost['map50'] / base).round(3)  # 사람 라벨 대비 성능 비율
+cost.to_csv('label_cost.csv', index=False); save_out('label_cost.csv')  # CSV 저장 후 Drive로 복사
 cost
 ```
 
@@ -607,17 +630,19 @@ labels, label_hours, map50, map50_vs_human 열의 3행 표가 나옵니다. 검�
 ### 셀 13. 비용과 클래스별 성능 비교 그림 그리기 (label_report.png)
 
 ```python
-fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-cols = {'human': 'tab:blue', 'auto': 'tab:orange', 'hybrid': 'tab:green'}
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))  # 그래프 2개를 가로로 나란히
+cols = {'human': 'tab:blue', 'auto': 'tab:orange', 'hybrid': 'tab:green'}  # 두 그래프에서 같은 방식은 같은 색
+# 왼쪽: 라벨링 시간 막대
 axes[0].bar(cost['labels'], cost['label_hours'], color=[cols[l] for l in cost['labels']])
 axes[0].set_ylabel('labeling hours (estimate)'); axes[0].set_title('Labeling cost')
 for i, v in enumerate(cost['label_hours']):
-    axes[0].text(i, v, f'{v:.1f} h', ha='center', va='bottom')
-per_class = battle_df.set_index('labels')[[f'ap50_{c}' for c in TARGET.values()]]
-per_class.columns = list(TARGET.values())
-per_class.T.plot.bar(ax=axes[1], color=[cols[l] for l in per_class.index], rot=0)
+    axes[0].text(i, v, f'{v:.1f} h', ha='center', va='bottom')  # 막대 위에 시간 표시
+# 오른쪽: 클래스별 AP50 막대 (방식별 색)
+per_class = battle_df.set_index('labels')[[f'ap50_{c}' for c in TARGET.values()]]  # 클래스별 AP50 열만 고름
+per_class.columns = list(TARGET.values())  # 열 이름을 helmet·vest·person으로
+per_class.T.plot.bar(ax=axes[1], color=[cols[l] for l in per_class.index], rot=0)  # .T(전치): x축 = 클래스, 막대 = 라벨 방식
 axes[1].set_ylim(0, 1); axes[1].set_ylabel('AP50 on human-labeled test set'); axes[1].set_title('Model quality by class')
-plt.tight_layout(); plt.savefig('label_report.png', dpi=120); save_out('label_report.png'); plt.show()
+plt.tight_layout(); plt.savefig('label_report.png', dpi=120); save_out('label_report.png'); plt.show()  # show() 전에 저장 (뒤에 하면 빈 그림)
 ```
 
 **코드 설명**

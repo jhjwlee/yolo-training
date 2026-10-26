@@ -1,6 +1,6 @@
 # YOLO 2회차 추가 실습 — 위험구역 침입 감시 시스템
 
-노트북: [`yolo_day2_zone_lab_v1.0.ipynb`](../yolo_day2_zone_lab_v1.0.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_zone_lab_v1.0.ipynb)
+노트북: [`yolo_day2_zone_lab_v1.1.ipynb`](../yolo_day2_zone_lab_v1.1.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_zone_lab_v1.1.ipynb)
 
 | 항목 | 내용 |
 |---|---|
@@ -52,6 +52,8 @@
 ### 셀 1. ultralytics와 lap 설치
 
 ```python
+# 패키지 설치 — ultralytics(YOLO), lap(ByteTrack이 박스를 짝지을 때 사용)
+# -q: 설치 로그 줄임. 런타임을 새로 연결하면 이 셀부터 다시 실행
 !pip -q install ultralytics lap
 ```
 
@@ -74,29 +76,30 @@
 import os, json, shutil, base64, subprocess
 from pathlib import Path
 
+# 영상 처리(cv2), 배열(numpy), 표(pandas), 그래프(matplotlib)
 import cv2
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import torch
-from IPython.display import HTML, display
+from IPython.display import HTML, display  # 셀 출력에 HTML(영상 플레이어·그리기 도구) 띄우기
 from ultralytics import YOLO
 
-print('GPU 사용 가능:', torch.cuda.is_available())
+print('GPU 사용 가능:', torch.cuda.is_available())  # T4 런타임이면 True
 
 try:
-    from google.colab import drive, output
+    from google.colab import drive, output  # Colab에만 있는 모듈 → 성공하면 Colab
     IN_COLAB = True
 except ImportError:
     IN_COLAB = False
 
-USE_DRIVE = True
+USE_DRIVE = True  # False면 Drive 대신 런타임 임시 폴더에 저장 (연결이 끊기면 사라짐)
 if IN_COLAB and USE_DRIVE:
     drive.mount('/content/drive')
-    SAVE_DIR = Path('/content/drive/MyDrive/yolo_day2/zone')
+    SAVE_DIR = Path('/content/drive/MyDrive/yolo_day2/zone')  # Drive 안 결과 폴더
 else:
     SAVE_DIR = Path('outputs/zone')
-SAVE_DIR.mkdir(parents=True, exist_ok=True)
+SAVE_DIR.mkdir(parents=True, exist_ok=True)  # 중간 폴더까지 생성, 이미 있으면 그냥 통과
 print('결과 저장 위치:', SAVE_DIR.resolve())
 ```
 
@@ -119,24 +122,28 @@ print('결과 저장 위치:', SAVE_DIR.resolve())
 ### 셀 3. 그림 보기·영상 보기·결과 저장 보조 함수
 
 ```python
+# OpenCV(BGR) 이미지를 matplotlib로 보여 주기
 def show_bgr(img, title=None, size=(9, 6)):
     plt.figure(figsize=size)
-    plt.imshow(img[..., ::-1]); plt.axis('off')
+    plt.imshow(img[..., ::-1]); plt.axis('off')  # [..., ::-1]: 색 축을 뒤집어 BGR→RGB, 눈금 숨김
     if title:
         plt.title(title)
     plt.show()
 
+# mp4 영상을 노트북 안에서 재생 (입력: 영상 경로, 표시 폭 px)
+# OpenCV가 만든 mp4v 영상은 브라우저가 못 틀어서 H.264로 다시 인코딩
 def show_video(path, width=640):
-    h264 = str(Path(path).with_name(Path(path).stem + '_h264.mp4'))
+    h264 = str(Path(path).with_name(Path(path).stem + '_h264.mp4'))  # 예: zone_monitor.mp4 → zone_monitor_h264.mp4
     subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(path),
                     '-vcodec', 'libx264', '-pix_fmt', 'yuv420p', h264], check=True)
-    data = base64.b64encode(open(h264, 'rb').read()).decode()
+    data = base64.b64encode(open(h264, 'rb').read()).decode()  # 영상 파일을 글자(base64)로 바꿔 HTML에 직접 넣음
     display(HTML(f'<video width="{width}" controls loop autoplay muted>'
                  f'<source src="data:video/mp4;base64,{data}" type="video/mp4"></video>'))
 
+# 파일을 SAVE_DIR로 복사하고 복사된 경로를 돌려줌
 def save_out(path):
     dst = SAVE_DIR / Path(path).name
-    if Path(path).resolve() != dst.resolve():
+    if Path(path).resolve() != dst.resolve():  # 원본과 대상이 같은 파일이면 복사 생략
         shutil.copy(path, dst)
     return dst
 ```
@@ -159,15 +166,15 @@ def save_out(path):
 ```python
 # 실습 영상 내려받기 (OpenCV 저장소의 공개 샘플 영상)
 VIDEO = 'vtest.avi'
-if not Path(VIDEO).exists():
+if not Path(VIDEO).exists():  # 이미 있으면 다시 받지 않음 (!wget: 셸 명령)
     !wget -q https://raw.githubusercontent.com/opencv/opencv/master/samples/data/vtest.avi -O {VIDEO}
 
-cap = cv2.VideoCapture(VIDEO)
-FPS = cap.get(cv2.CAP_PROP_FPS) or 10
-N_FRAMES = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-ok, FIRST = cap.read()
-cap.release()
+cap = cv2.VideoCapture(VIDEO)  # 영상 파일 열기
+FPS = cap.get(cv2.CAP_PROP_FPS) or 10  # 초당 프레임 수, 못 읽으면(0) 10
+N_FRAMES = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))  # 전체 프레임 수
+W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))  # 가로·세로 픽셀 수
+ok, FIRST = cap.read()  # 첫 프레임 — 구역 그리기·결과 그림 배경용
+cap.release()  # 열었던 영상 닫기
 print(f'{VIDEO}: {W}x{H}, {FPS:.0f}fps, {N_FRAMES}프레임, {N_FRAMES / FPS:.1f}초')
 show_bgr(FIRST, 'first frame')
 ```
@@ -198,13 +205,13 @@ yolo26n.pt는 COCO 데이터셋의 80개 클래스를 찾도록 학습된 모델
 ### 셀 5. 모델을 불러와 첫 프레임에서 사람 탐지
 
 ```python
-model = YOLO('yolo26n.pt')
-PERSON = 0
-CONF = 0.3
+model = YOLO('yolo26n.pt')  # COCO 사전학습 모델 중 가장 작은 n 크기
+PERSON = 0  # COCO 클래스 0번 = 사람
+CONF = 0.3  # 신뢰도 기준 — 낮추면 더 많이 찾지만 오탐도 늘어남
 
-r = model(FIRST, classes=[PERSON], conf=CONF, verbose=False)[0]
+r = model(FIRST, classes=[PERSON], conf=CONF, verbose=False)[0]  # classes=[0]: 사람만, [0]: 결과 리스트의 첫 이미지
 print('첫 프레임에서 찾은 사람 수:', len(r.boxes))
-show_bgr(r.plot(), 'person detection (first frame)')
+show_bgr(r.plot(), 'person detection (first frame)')  # r.plot(): 박스를 그린 BGR 이미지
 ```
 
 **코드 설명**
@@ -225,8 +232,8 @@ show_bgr(r.plot(), 'person detection (first frame)')
 
 ```python
 # 영상 전체 — 프레임마다 사람 수 세기
-counts = [len(r.boxes) for r in model(VIDEO, stream=True, classes=[PERSON], conf=CONF, verbose=False)]
-t = np.arange(len(counts)) / FPS
+counts = [len(r.boxes) for r in model(VIDEO, stream=True, classes=[PERSON], conf=CONF, verbose=False)]  # stream=True: 프레임마다 결과를 하나씩 받아 메모리 절약
+t = np.arange(len(counts)) / FPS  # 프레임 번호 → 초
 plt.figure(figsize=(10, 3))
 plt.plot(t, counts, lw=1)
 plt.xlabel('time (s)'); plt.ylabel('people in frame'); plt.title('People detected per frame')
@@ -265,22 +272,24 @@ print(f'프레임당 평균 {np.mean(counts):.1f}명, 최대 {max(counts)}명')
 ### 셀 7. 사람을 추적해 프레임·사람 단위 관측 표 만들기
 
 ```python
+# 영상 경로 → 관측 표 (프레임마다, 사람마다 한 줄)
 def track_people(src):
     rows = []
-    for i, r in enumerate(model.track(src, stream=True, classes=[PERSON], conf=CONF,
-                                      tracker='bytetrack.yaml', verbose=False)):
-        if r.boxes.id is None:
+    for i, r in enumerate(model.track(src, stream=True, classes=[PERSON], conf=CONF,  # i = 프레임 번호
+                                      tracker='bytetrack.yaml', verbose=False)):  # ByteTrack으로 같은 사람에 같은 ID 부여
+        if r.boxes.id is None:  # 추적 중인 사람이 없는 프레임은 건너뜀
             continue
+        # 사람마다 박스 좌표(xyxy), 추적 ID, 신뢰도 (.cpu(): GPU 값을 CPU로)
         for (x1, y1, x2, y2), tid, cf in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.id.int().cpu().tolist(),
                                              r.boxes.conf.cpu().numpy()):
             rows.append({'frame': i, 'time_s': round(i / FPS, 2), 'track_id': tid,
                          'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
-                         'foot_x': (x1 + x2) / 2, 'foot_y': y2, 'conf': round(float(cf), 3)})
+                         'foot_x': (x1 + x2) / 2, 'foot_y': y2, 'conf': round(float(cf), 3)})  # 발 위치 = 박스 아래 가운데
     return pd.DataFrame(rows)
 
-obs = track_people(VIDEO)
+obs = track_people(VIDEO)  # 영상 전체를 한 번만 추적
 print('관측 행 수:', len(obs), '| 추적된 사람(ID) 수:', obs['track_id'].nunique())
-obs.round(1).head()
+obs.round(1).head()  # 앞 5행 미리보기
 ```
 
 **코드 설명**
@@ -304,10 +313,10 @@ obs.round(1).head()
 
 ```python
 # ID별로 몇 초 동안 보였는지
-life = obs.groupby('track_id').agg(first_s=('time_s', 'min'), last_s=('time_s', 'max'), frames=('frame', 'count'))
-life['seen_s'] = (life['frames'] / FPS).round(1)
-print('5초 이상 추적된 ID:', int((life['seen_s'] >= 5).sum()), '/', len(life))
-life.sort_values('seen_s', ascending=False).head(8)
+life = obs.groupby('track_id').agg(first_s=('time_s', 'min'), last_s=('time_s', 'max'), frames=('frame', 'count'))  # ID별 처음·마지막 시각, 관측 프레임 수
+life['seen_s'] = (life['frames'] / FPS).round(1)  # 실제 관측된 시간(초)
+print('5초 이상 추적된 ID:', int((life['seen_s'] >= 5).sum()), '/', len(life))  # True를 1로 세어 개수
+life.sort_values('seen_s', ascending=False).head(8)  # 오래 보인 순으로 8개
 ```
 
 **코드 설명**
@@ -326,13 +335,13 @@ life.sort_values('seen_s', ascending=False).head(8)
 ```python
 # 발 위치 궤적 그리기 — ID마다 다른 색
 def id_color(tid):
-    rng = np.random.default_rng(int(tid))
-    return tuple(int(c) for c in rng.integers(60, 255, 3))
+    rng = np.random.default_rng(int(tid))  # ID를 난수 씨앗으로 → 같은 ID는 늘 같은 색
+    return tuple(int(c) for c in rng.integers(60, 255, 3))  # 60~254 사이 BGR 값 (너무 어두운 색 제외)
 
 canvas = FIRST.copy()
-for tid, g in obs.groupby('track_id'):
-    pts = g[['foot_x', 'foot_y']].to_numpy().astype(np.int32)
-    cv2.polylines(canvas, [pts], False, id_color(tid), 2)
+for tid, g in obs.groupby('track_id'):  # ID별로 묶어 처리 (g = 그 ID의 행들)
+    pts = g[['foot_x', 'foot_y']].to_numpy().astype(np.int32)  # OpenCV용 정수 좌표 배열
+    cv2.polylines(canvas, [pts], False, id_color(tid), 2)  # False: 끝점을 처음 점과 잇지 않음
 show_bgr(canvas, 'foot trajectories of every tracked person')
 ```
 
@@ -366,13 +375,15 @@ Colab 셀은 파이썬 커널(서버)에서 실행되고, 출력은 내 브라�
 ### 셀 10. 클릭으로 금지 구역을 그리는 도구 띄우기
 
 ```python
-DEFAULT_ZONE = [[0, 330], [330, 350], [470, 400], [767, 500], [767, 575], [0, 575]]
-ZONE_PICK = {'points': None}
+DEFAULT_ZONE = [[0, 330], [330, 350], [470, 400], [767, 500], [767, 575], [0, 575]]  # 기본 구역 꼭짓점 (x, y) — 화면 아래 잔디밭
+ZONE_PICK = {'points': None}  # 그린 결과를 받을 사전 (콜백에서 값 갱신)
 
 def pick_zone(img, max_width=768):
     """Colab 화면에서 클릭으로 다각형을 그리는 도구. 완료 버튼을 누르면 ZONE_PICK에 저장"""
-    ok, buf = cv2.imencode('.jpg', img)
-    b64 = base64.b64encode(buf).decode()
+    ok, buf = cv2.imencode('.jpg', img)  # 이미지를 JPEG 바이트로 압축
+    b64 = base64.b64encode(buf).decode()  # 바이트 → 글자(base64), HTML에 넣기용
+    # 브라우저에서 도는 그리기 도구(HTML·JavaScript) 문자열
+    # 끝의 replace로 B64·MAXW 자리에 이미지 데이터와 최대 폭을 끼워 넣음
     html = '''
 <canvas id="zc" style="cursor:crosshair;max-width:MAXWpx;width:100%"></canvas><br>
 <button id="zundo">되돌리기</button> <button id="zdone">완료</button> <span id="zmsg"></span>
@@ -401,11 +412,11 @@ document.getElementById("zdone").onclick = async () => {
   document.getElementById("zmsg").textContent = " 저장됨: 점 " + pts.length + "개";
 };
 </script>'''.replace('B64', b64).replace('MAXW', str(max_width))
-    display(HTML(html))
+    display(HTML(html))  # 셀 출력 영역에 도구 띄우기
 
 if IN_COLAB:
-    output.register_callback('zone.set', lambda pts: ZONE_PICK.update(points=pts))
-    pick_zone(FIRST)
+    output.register_callback('zone.set', lambda pts: ZONE_PICK.update(points=pts))  # 브라우저의 'zone.set' 호출 → 좌표를 ZONE_PICK에 저장
+    pick_zone(FIRST)  # 첫 프레임 위에 그리기 도구 표시
 else:
     print('Colab이 아니므로 그리기 도구를 건너뜁니다. 기본 구역을 사용합니다.')
 ```
@@ -431,14 +442,15 @@ Colab에서는 첫 프레임 그림과 '되돌리기', '완료' 버튼이 나타
 
 ```python
 # 그린 구역이 있으면 그것을, 없으면 기본 구역을 사용
-ZONE = np.array(ZONE_PICK['points'] or DEFAULT_ZONE, np.int32)
+ZONE = np.array(ZONE_PICK['points'] or DEFAULT_ZONE, np.int32)  # OpenCV 도형 함수용 정수 배열
 print('금지 구역 꼭짓점:', ZONE.tolist())
 
+# 구역을 반투명하게 칠하고 테두리를 그린 이미지를 돌려줌 (color는 BGR)
 def draw_zone(img, zone, color=(0, 0, 255), alpha=0.25):
     overlay = img.copy()
-    cv2.fillPoly(overlay, [zone], color)
-    img = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
-    cv2.polylines(img, [zone], True, color, 2)
+    cv2.fillPoly(overlay, [zone], color)  # 복사본에 다각형 채우기
+    img = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)  # 칠한 그림 alpha + 원본 (1 - alpha) → 반투명
+    cv2.polylines(img, [zone], True, color, 2)  # True: 다각형을 닫아 테두리
     return img
 
 show_bgr(draw_zone(FIRST.copy(), ZONE), 'restricted zone')
@@ -462,18 +474,21 @@ show_bgr(draw_zone(FIRST.copy(), ZONE), 'restricted zone')
 ### 셀 12. 발 위치로 구역 안·밖 판정하고 구역 안 인원 그래프 그리기
 
 ```python
+# 발 위치 (x, y)가 구역 안(경계 포함)이면 True
 def in_zone(x, y, zone=None):
     zone = ZONE if zone is None else zone          # 호출할 때의 ZONE을 사용 (구역을 다시 그려도 반영)
+    # reshape(-1, 1, 2): OpenCV 윤곽선 모양으로, float32로 변환
+    # False: 거리 대신 +1(안) / 0(경계) / -1(밖)만 받음
     return cv2.pointPolygonTest(zone.reshape(-1, 1, 2).astype(np.float32), (float(x), float(y)), False) >= 0
 
-# 검산: 구역의 무게중심(안쪽)과 화면 왼쪽 위 모서리(바깥)
+# 검산: 구역 꼭짓점의 평균점(안쪽)과 화면 왼쪽 위 모서리(바깥)
 print('구역 무게중심(안):', in_zone(*ZONE.mean(0)))
 print('화면 왼쪽 위(밖):', in_zone(5, 5))
 
-obs['in_zone'] = [in_zone(x, y) for x, y in zip(obs['foot_x'], obs['foot_y'])]
-per_frame = obs.groupby('frame')['in_zone'].sum().reindex(range(N_FRAMES), fill_value=0)
+obs['in_zone'] = [in_zone(x, y) for x, y in zip(obs['foot_x'], obs['foot_y'])]  # 모든 발 위치를 판정해 새 열로
+per_frame = obs.groupby('frame')['in_zone'].sum().reindex(range(N_FRAMES), fill_value=0)  # 프레임별 구역 안 인원, 빈 프레임은 0
 plt.figure(figsize=(10, 3))
-plt.fill_between(per_frame.index / FPS, per_frame.values, step='mid', color='tab:red', alpha=.5)
+plt.fill_between(per_frame.index / FPS, per_frame.values, step='mid', color='tab:red', alpha=.5)  # 계단 모양 면적 그래프
 plt.xlabel('time (s)'); plt.ylabel('people in zone'); plt.title('People inside the restricted zone')
 plt.grid(alpha=.3); plt.show()
 print('구역 안 관측 비율:', round(obs['in_zone'].mean(), 3), '| 구역에 들어간 적 있는 ID:', obs.loc[obs['in_zone'], 'track_id'].nunique())
@@ -481,7 +496,7 @@ print('구역 안 관측 비율:', round(obs['in_zone'].mean(), 3), '| 구역에
 
 **코드 설명**
 
-- `def in_zone(x, y, zone=ZONE):` — 점 하나가 구역 안(경계 포함)이면 True를 돌려줍니다. 기본값 `zone=ZONE`은 함수를 정의하는 순간의 ZONE으로 고정됩니다.
+- `def in_zone(x, y, zone=None):` / `zone = ZONE if zone is None else zone` — 점 하나가 구역 안(경계 포함)이면 True를 돌려줍니다. 구역을 따로 주지 않으면 **호출하는 순간의** ZONE을 쓰므로, 구역을 다시 그려도 함수를 다시 정의할 필요가 없습니다.
 - `zone.reshape(-1, 1, 2).astype(np.float32)` — pointPolygonTest가 받는 윤곽선 모양(점 개수, 1, 2)과 자료형으로 바꿉니다.
 - `cv2.pointPolygonTest(..., (float(x), float(y)), False) >= 0` — 마지막 인자 False는 거리 대신 +1/0/-1만 받겠다는 뜻입니다. 0 이상이면 경계 위도 안으로 봅니다.
 - `in_zone(*ZONE.mean(0))`, `in_zone(5, 5)` — 구역 꼭짓점의 평균점(안쪽)과 화면 왼쪽 위(바깥)로 함수를 검산합니다.
@@ -513,33 +528,34 @@ print('구역 안 관측 비율:', round(obs['in_zone'].mean(), 3), '| 구역에
 ### 셀 13. 이벤트 규칙 정의와 가상 데이터 검산
 
 ```python
-ENTER_FRAMES = 3
-EXIT_FRAMES = 5
-DWELL_WARN_S = 3.0
+ENTER_FRAMES = 3  # 연속 3프레임(10fps면 0.3초) 안에 있어야 진입 — 늘리면 스침을 더 무시
+EXIT_FRAMES = 5  # 연속 5프레임 밖이어야 이탈 — 늘리면 잠깐 가려짐에 강함
+DWELL_WARN_S = 3.0  # 체류 경고 기준(초) — 낮추면 경고가 늘어남
 
+# in_zone 열이 있는 관측 표 → 이벤트 표 (진입·이탈 프레임, 체류 시간, 경고)
 def zone_events(obs, fps=FPS):
     events = []
-    for tid, g in obs.sort_values('frame').groupby('track_id'):
-        inside, run_in, run_out, start = False, 0, 0, None
-        frames, flags = g['frame'].to_numpy(), g['in_zone'].to_numpy()
+    for tid, g in obs.sort_values('frame').groupby('track_id'):  # ID마다 시간 순서로 훑기
+        inside, run_in, run_out, start = False, 0, 0, None  # 안 확정 여부, 연속 안·밖 횟수, 진입 프레임
+        frames, flags = g['frame'].to_numpy(), g['in_zone'].to_numpy()  # 프레임 번호와 안/밖 여부 배열
         for f, flag in zip(frames, flags):
             if flag:
                 run_in, run_out = run_in + 1, 0
-                if not inside and run_in >= ENTER_FRAMES:
-                    inside, start = True, f - ENTER_FRAMES + 1
+                if not inside and run_in >= ENTER_FRAMES:  # 연속으로 충분히 안에 있으면 진입 확정
+                    inside, start = True, f - ENTER_FRAMES + 1  # 연속 구간이 시작된 프레임을 진입으로
             else:
                 run_out, run_in = run_out + 1, 0
-                if inside and run_out >= EXIT_FRAMES:
-                    events.append((tid, start, f - EXIT_FRAMES)); inside = False
-        if inside:
+                if inside and run_out >= EXIT_FRAMES:  # 연속으로 충분히 밖이면 이탈 확정
+                    events.append((tid, start, f - EXIT_FRAMES)); inside = False  # f - EXIT_FRAMES = 마지막으로 안에 있던 프레임
+        if inside:  # 구역 안에서 추적이 끝난 경우
             events.append((tid, start, frames[-1]))
     rows = []
-    for k, (tid, s, e) in enumerate(sorted(events, key=lambda x: x[1]), 1):
-        dwell = (e - s + 1) / fps
+    for k, (tid, s, e) in enumerate(sorted(events, key=lambda x: x[1]), 1):  # 진입 순으로 정렬, 번호는 1부터
+        dwell = (e - s + 1) / fps  # 체류 시간(초), 양 끝 프레임 포함
         rows.append({'event_id': k, 'track_id': tid, 'enter_frame': int(s), 'exit_frame': int(e),
                      'enter_s': round(s / fps, 1), 'exit_s': round(e / fps, 1), 'dwell_s': round(dwell, 1),
                      'warning': int(dwell >= DWELL_WARN_S)})
-    return pd.DataFrame(rows, columns=['event_id', 'track_id', 'enter_frame', 'exit_frame',
+    return pd.DataFrame(rows, columns=['event_id', 'track_id', 'enter_frame', 'exit_frame',  # 열 이름 고정 → 0건이어도 빈 표
                                        'enter_s', 'exit_s', 'dwell_s', 'warning'])
 
 # 검산 — 가상 관측: 2프레임만 걸친 사람(무시), 20프레임 머문 사람(이벤트 1건, 2.0초)
@@ -547,7 +563,7 @@ test = pd.DataFrame({'track_id': [1] * 10 + [2] * 30, 'frame': list(range(10)) +
                      'in_zone': [0, 0, 1, 1, 0, 0, 0, 0, 0, 0] + [0] * 5 + [1] * 20 + [0] * 5})
 ev = zone_events(test, fps=10)   # 검산은 10fps 기준으로 계산
 print(ev)
-assert len(ev) == 1 and ev.iloc[0]['track_id'] == 2 and ev.iloc[0]['dwell_s'] == 2.0
+assert len(ev) == 1 and ev.iloc[0]['track_id'] == 2 and ev.iloc[0]['dwell_s'] == 2.0  # 기대와 다르면 여기서 멈춤
 print('이벤트 규칙이 기대대로 동작합니다.')
 ```
 
@@ -573,7 +589,7 @@ track_id 2, enter_frame 5, exit_frame 24, dwell_s 2.0, warning 0인 이벤트 1�
 
 ```python
 events = zone_events(obs)
-events.to_csv('zone_events.csv', index=False); save_out('zone_events.csv')
+events.to_csv('zone_events.csv', index=False); save_out('zone_events.csv')  # 행 번호 없이 저장 후 Drive로 복사
 print(f'침입 이벤트 {len(events)}건 | 경고(체류 {DWELL_WARN_S:.0f}초 이상) {int(events["warning"].sum())}건')
 events
 ```
@@ -592,30 +608,31 @@ events
 ### 셀 15. 구역 상태와 체류 시간을 표시한 감시 영상 만들기
 
 ```python
+# 관측·이벤트 표로 감시 영상을 다시 그려 dst에 저장 (모델은 다시 돌리지 않음)
 def render_monitor(src, obs, events, dst='zone_monitor.mp4'):
-    by_frame = {f: g for f, g in obs.groupby('frame')}
+    by_frame = {f: g for f, g in obs.groupby('frame')}  # 프레임 번호 → 그 프레임의 관측 표
     cap = cv2.VideoCapture(src)
-    writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), FPS, (W, H))
+    writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), FPS, (W, H))  # 원본과 같은 fps·크기로 mp4 쓰기
     i = 0
     while True:
         ok, frame = cap.read()
         if not ok:
             break
-        active = events[(events['enter_frame'] <= i) & (events['exit_frame'] >= i)]
-        dwell_now = {r.track_id: (i - r.enter_frame + 1) / FPS for r in active.itertuples()}
-        warn_ids = {t for t, d in dwell_now.items() if d >= DWELL_WARN_S}
-        zone_col = (0, 0, 255) if warn_ids else (0, 165, 255) if dwell_now else (0, 200, 0)
+        active = events[(events['enter_frame'] <= i) & (events['exit_frame'] >= i)]  # 지금 프레임 i에 진행 중인 이벤트
+        dwell_now = {r.track_id: (i - r.enter_frame + 1) / FPS for r in active.itertuples()}  # ID → 지금까지 머문 시간(초)
+        warn_ids = {t for t, d in dwell_now.items() if d >= DWELL_WARN_S}  # 경고 기준을 넘은 ID 집합
+        zone_col = (0, 0, 255) if warn_ids else (0, 165, 255) if dwell_now else (0, 200, 0)  # 빨강(경고) / 주황(누군가 있음) / 초록 — BGR
         frame = draw_zone(frame, ZONE, zone_col, 0.22)
-        for r in by_frame.get(i, pd.DataFrame()).itertuples():
+        for r in by_frame.get(i, pd.DataFrame()).itertuples():  # 이 프레임의 사람마다 (없으면 빈 표)
             col = (0, 0, 255) if r.track_id in warn_ids else (0, 165, 255) if r.track_id in dwell_now else (230, 230, 230)
             cv2.rectangle(frame, (int(r.x1), int(r.y1)), (int(r.x2), int(r.y2)), col, 2)
             cv2.circle(frame, (int(r.foot_x), int(r.foot_y)), 4, col, -1)
             label = f'#{r.track_id}' + (f' {dwell_now[r.track_id]:.1f}s' if r.track_id in dwell_now else '')
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)  # 라벨 글자 크기 → 검은 배경 상자 크기
             cv2.rectangle(frame, (int(r.x1), int(r.y1) - th - 10), (int(r.x1) + tw + 4, int(r.y1) - 2), (0, 0, 0), -1)
             cv2.putText(frame, label, (int(r.x1) + 2, int(r.y1) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 2)
-        n_warn = int(((events['warning'] == 1) & (events['enter_frame'] + DWELL_WARN_S * FPS <= i)).sum())
-        cv2.rectangle(frame, (0, 0), (W, 34), (0, 0, 0), -1)
+        n_warn = int(((events['warning'] == 1) & (events['enter_frame'] + DWELL_WARN_S * FPS <= i)).sum())  # 진입 후 경고 시간이 이미 지난 경고만 셈
+        cv2.rectangle(frame, (0, 0), (W, 34), (0, 0, 0), -1)  # 상단 정보 막대 배경 (-1: 속 채움)
         cv2.putText(frame, f'IN ZONE: {len(dwell_now)}   ALERTS: {n_warn}   t={i / FPS:5.1f}s', (10, 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         if warn_ids:
@@ -623,7 +640,7 @@ def render_monitor(src, obs, events, dst='zone_monitor.mp4'):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
         writer.write(frame)
         i += 1
-    cap.release(); writer.release()
+    cap.release(); writer.release()  # release해야 영상 파일이 완성됨
     return dst
 
 render_monitor(VIDEO, obs, events)
@@ -663,18 +680,19 @@ show_video('zone_monitor.mp4')
 ### 셀 16. 발 위치 히트맵 만들고 저장
 
 ```python
+# 발 위치 → 0~1 밀도 배열(H×W). sigma가 클수록 넓게 번짐
 def foot_heatmap(obs, sigma=12):
-    heat = np.zeros((H, W), np.float32)
-    for x, y in zip(obs['foot_x'].astype(int).clip(0, W - 1), obs['foot_y'].astype(int).clip(0, H - 1)):
+    heat = np.zeros((H, W), np.float32)  # [세로, 가로] 순서 → heat[y, x]
+    for x, y in zip(obs['foot_x'].astype(int).clip(0, W - 1), obs['foot_y'].astype(int).clip(0, H - 1)):  # 정수 좌표로, 화면 밖 값은 가장자리로
         heat[y, x] += 1
-    heat = cv2.GaussianBlur(heat, (0, 0), sigma)
-    return heat / heat.max()
+    heat = cv2.GaussianBlur(heat, (0, 0), sigma)  # (0, 0): 커널 크기를 sigma에 맞춰 자동 결정
+    return heat / heat.max()  # 최댓값을 1로 맞춤
 
 heat = foot_heatmap(obs)
-color = cv2.applyColorMap((heat * 255).astype(np.uint8), cv2.COLORMAP_JET)
-mask = (heat > 0.03)[..., None]
-heat_img = np.where(mask, cv2.addWeighted(FIRST, 0.45, color, 0.55, 0), FIRST)
-cv2.polylines(heat_img, [ZONE], True, (255, 255, 255), 2)
+color = cv2.applyColorMap((heat * 255).astype(np.uint8), cv2.COLORMAP_JET)  # 0~255 값 → 파랑(낮음)~빨강(높음) 색
+mask = (heat > 0.03)[..., None]  # [..., None]: 색 채널과 맞추려 축 하나 추가
+heat_img = np.where(mask, cv2.addWeighted(FIRST, 0.45, color, 0.55, 0), FIRST)  # 사람이 다닌 곳만 색을 섞고 나머지는 원본
+cv2.polylines(heat_img, [ZONE], True, (255, 255, 255), 2)  # 금지 구역 경계를 흰 선으로
 cv2.imwrite('heatmap.png', heat_img); save_out('heatmap.png')
 show_bgr(heat_img, 'Foot-traffic heatmap (white = restricted zone)')
 ```
@@ -699,30 +717,31 @@ show_bgr(heat_img, 'Foot-traffic heatmap (white = restricted zone)')
 ### 셀 17. 요약 수치 저장과 감시 리포트 그림 만들기
 
 ```python
+# 감시 요약 수치 (이벤트가 0건이면 max·sum 대신 0.0)
 SUMMARY = {'video_s': round(N_FRAMES / FPS, 1), 'people_tracked': int(obs['track_id'].nunique()),
            'zone_events': len(events), 'warnings': int(events['warning'].sum()),
            'max_dwell_s': float(events['dwell_s'].max()) if len(events) else 0.0,
            'total_dwell_s': round(float(events['dwell_s'].sum()), 1) if len(events) else 0.0}
-json.dump(SUMMARY, open('zone_summary.json', 'w'), indent=2); save_out('zone_summary.json')
+json.dump(SUMMARY, open('zone_summary.json', 'w'), indent=2); save_out('zone_summary.json')  # JSON 저장 후 Drive로 복사
 display(pd.DataFrame([SUMMARY]))
 
 fig = plt.figure(figsize=(12, 6.5))
-gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.2])
+gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.2])  # 2행 2열 격자, gs[0, :] = 윗줄 전체
 ax = fig.add_subplot(gs[0, :])
-ax.fill_between(per_frame.index / FPS, per_frame.values, step='mid', color='tab:orange', alpha=.4, label='people in zone')
+ax.fill_between(per_frame.index / FPS, per_frame.values, step='mid', color='tab:orange', alpha=.4, label='people in zone')  # 구역 안 인원 (Step 3의 per_frame)
 for r in events.itertuples():
-    ax.axvspan(r.enter_s, r.exit_s, ymin=0.9, ymax=1.0, color='red' if r.warning else 'gray', alpha=.6)
+    ax.axvspan(r.enter_s, r.exit_s, ymin=0.9, ymax=1.0, color='red' if r.warning else 'gray', alpha=.6)  # 위쪽 10% 높이에 이벤트 구간 막대
 ax.set_xlim(0, N_FRAMES / FPS); ax.set_xlabel('time (s)'); ax.set_ylabel('people')
 ax.set_title(f"Zone report | {SUMMARY['zone_events']} entries, {SUMMARY['warnings']} warnings, "
              f"longest stay {SUMMARY['max_dwell_s']} s  (top bars: red = warning)")
 ax.legend(loc='upper left'); ax.grid(alpha=.3)
 ax2 = fig.add_subplot(gs[1, 0])
-ax2.hist(events['dwell_s'], bins=15, color='tab:red', alpha=.7)
-ax2.axvline(DWELL_WARN_S, ls='--', c='k'); ax2.set_xlabel('dwell time (s)'); ax2.set_ylabel('entries')
+ax2.hist(events['dwell_s'], bins=15, color='tab:red', alpha=.7)  # 체류 시간 분포
+ax2.axvline(DWELL_WARN_S, ls='--', c='k'); ax2.set_xlabel('dwell time (s)'); ax2.set_ylabel('entries')  # 점선 = 경고 기준
 ax2.set_title('How long people stayed')
 ax3 = fig.add_subplot(gs[1, 1])
-ax3.imshow(heat_img[..., ::-1]); ax3.axis('off'); ax3.set_title('Foot-traffic heatmap')
-plt.tight_layout(); plt.savefig('zone_report.png', dpi=120); save_out('zone_report.png'); plt.show()
+ax3.imshow(heat_img[..., ::-1]); ax3.axis('off'); ax3.set_title('Foot-traffic heatmap')  # BGR → RGB로 바꿔 표시
+plt.tight_layout(); plt.savefig('zone_report.png', dpi=120); save_out('zone_report.png'); plt.show()  # show 전에 저장 (show 후엔 빈 그림)
 ```
 
 **코드 설명**
@@ -745,8 +764,8 @@ plt.tight_layout(); plt.savefig('zone_report.png', dpi=120); save_out('zone_repo
 ### 셀 18. 관측 표 저장과 결과 파일 목록 확인
 
 ```python
-obs_out = obs.round(2)
-obs_out.to_csv('zone_frames.csv', index=False); save_out('zone_frames.csv')
+obs_out = obs.round(2)  # 소수 둘째 자리로 반올림 (in_zone 열 포함)
+obs_out.to_csv('zone_frames.csv', index=False); save_out('zone_frames.csv')  # 저장 후 Drive로 복사
 print(sorted(p.name for p in SAVE_DIR.iterdir()))
 ```
 
@@ -779,7 +798,6 @@ print(sorted(p.name for p in SAVE_DIR.iterdir()))
 |---|---|---|
 | 구역을 그리고 완료까지 눌렀는데 셀 11에서 기본 구역 좌표가 출력됩니다. | 셀 11이 완료 버튼을 누르기 전에 실행되었습니다. '모두 실행'을 쓰면 셀 10이 도구만 띄우고 바로 끝나, 다음 셀이 이어서 실행됩니다. | 완료 버튼 옆에 '저장됨: 점 N개'가 보이는지 확인한 뒤 셀 11부터 아래로 다시 실행합니다. |
 | 셀 10에서 그림과 버튼이 나오지 않거나, 완료를 눌러도 '저장됨' 문구가 뜨지 않습니다. | Colab이 아닌 환경(로컬 Jupyter, VS Code 등)에서는 google.colab 모듈과 invokeFunction 통로가 없습니다. Colab에서도 런타임을 다시 시작한 뒤 셀 10을 실행하지 않았다면 콜백 등록이 사라진 상태입니다. | Colab에서는 셀 2과 셀 10을 다시 실행한 뒤 그립니다. Colab이 아니라면 DEFAULT_ZONE의 좌표를 직접 고쳐 원하는 구역을 정합니다. |
-| 구역을 다시 그렸는데 구역 안 관측 비율과 이벤트가 그대로입니다. | in_zone 함수의 기본값 zone=ZONE은 셀 12를 실행한 순간의 구역으로 고정됩니다. 셀 11만 다시 실행하면 판정은 예전 구역으로 이루어집니다. | 구역을 바꾼 뒤에는 셀 11, 19, 22, 24, 27, 29, 30을 순서대로 다시 실행합니다. |
 | 구역을 다시 그렸는데 구역 안 인원 그래프와 이벤트가 그대로임 | 구역을 그린 뒤 아래 셀들을 다시 실행하지 않았습니다. `obs['in_zone']`은 구역 판정 셀을 실행한 시점의 구역으로 계산됩니다. | 구역 확정 셀(ZONE = ...)부터 아래로 다시 실행합니다. |
 | 침입 이벤트가 0건이고 리포트 그래프가 비어 있습니다. | 그린 구역에 아무도 들어가지 않았거나, 발 위치가 구역 경계 근처에서 ENTER_FRAMES만큼 연속으로 머물지 않았습니다. | 셀 9의 궤적이나 셀 16의 히트맵을 보고 사람이 실제로 지나간 곳에 구역을 다시 그립니다. 셀 12의 '구역에 들어간 적 있는 ID'가 0이면 구역 위치 문제입니다. |
 | 한 사람이 구역에 계속 있었는데 이벤트가 여러 건으로 나뉘거나 체류 시간이 짧게 나옵니다. | 가려짐 때문에 ID가 바뀌었거나(ID switch), 발 위치가 경계 밖으로 EXIT_FRAMES 이상 벗어났습니다. | 감시 영상에서 라벨의 #ID가 바뀌는지 확인합니다. 경계 흔들림이 원인이면 EXIT_FRAMES를 8~10으로 늘려 봅니다. |

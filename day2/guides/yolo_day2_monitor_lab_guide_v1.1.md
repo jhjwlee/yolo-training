@@ -1,6 +1,6 @@
 # YOLO 2회차 통합 실습 — 물류센터 실시간 모니터링 화면 만들기
 
-노트북: [`yolo_day2_monitor_lab_v1.0.ipynb`](../yolo_day2_monitor_lab_v1.0.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_monitor_lab_v1.0.ipynb)
+노트북: [`yolo_day2_monitor_lab_v1.1.ipynb`](../yolo_day2_monitor_lab_v1.1.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/yolo_day2_monitor_lab_v1.1.ipynb)
 
 | 항목 | 내용 |
 |---|---|
@@ -51,6 +51,8 @@
 ### 셀 1. 실습에 필요한 패키지 설치
 
 ```python
+# 패키지 설치 — ultralytics(YOLO), lap(ByteTrack 짝짓기), shapely(다각형 계산)
+# -q: 설치 로그 줄임. 런타임을 새로 연결하면 이 셀부터 다시 실행
 !pip -q install ultralytics lap shapely
 ```
 
@@ -70,19 +72,21 @@
 ### 셀 2. 라이브러리 불러오기, Drive 연결, 도우미 함수 정의
 
 ```python
-import os, sys, json, shutil, base64, subprocess, importlib
+import os, sys, json, shutil, base64, subprocess, importlib  # importlib: 고친 모듈을 다시 읽을 때 사용
 from pathlib import Path
 
+# 영상 처리(cv2), 배열(numpy), 표(pandas), 그래프(matplotlib)
 import cv2
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import torch
 from IPython.display import HTML, display
-from ultralytics import YOLO
+from ultralytics import YOLO  # YOLO 모델 불러오기·추론·트래킹
 
-print('GPU 사용 가능:', torch.cuda.is_available())
+print('GPU 사용 가능:', torch.cuda.is_available())  # T4 런타임이면 True
 
+# google.colab 모듈은 Colab에만 있음 → 불러오기 성공 여부로 환경 구분
 try:
     from google.colab import drive
     IN_COLAB = True
@@ -90,24 +94,27 @@ except ImportError:
     IN_COLAB = False
 
 if IN_COLAB:
-    drive.mount('/content/drive')
-    SAVE_DIR = Path('/content/drive/MyDrive/yolo_day2')
+    drive.mount('/content/drive')  # Google Drive 연결 (처음엔 접근 허용 창이 뜸)
+    SAVE_DIR = Path('/content/drive/MyDrive/yolo_day2')  # 실습 A·B가 결과를 저장한 폴더
 else:
-    SAVE_DIR = Path('outputs')
-SAVE_DIR.mkdir(parents=True, exist_ok=True)
+    SAVE_DIR = Path('outputs')  # Colab이 아니면 로컬 outputs 폴더
+SAVE_DIR.mkdir(parents=True, exist_ok=True)  # 중간 폴더까지 생성, 이미 있으면 그냥 통과
 print('결과 폴더:', SAVE_DIR.resolve())
 
+# mp4 영상을 노트북 안에서 재생 (입력: 영상 경로, 표시 폭 px)
+# OpenCV가 만든 mp4v 영상은 브라우저가 못 틀어서 H.264로 다시 인코딩
 def show_video(path, width=720):
-    h264 = str(Path(path).with_name(Path(path).stem + '_h264.mp4'))
+    h264 = str(Path(path).with_name(Path(path).stem + '_h264.mp4'))  # 예: monitor.mp4 → monitor_h264.mp4
     subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(path),
                     '-vcodec', 'libx264', '-pix_fmt', 'yuv420p', h264], check=True)
-    data = base64.b64encode(open(h264, 'rb').read()).decode()
+    data = base64.b64encode(open(h264, 'rb').read()).decode()  # 영상 파일을 글자(base64)로 바꿔 HTML에 직접 넣음
     display(HTML(f'<video width="{width}" controls loop autoplay muted>'
                  f'<source src="data:video/mp4;base64,{data}" type="video/mp4"></video>'))
 
+# 파일을 SAVE_DIR로 복사하고 복사된 경로를 돌려줌
 def save_out(path):
     dst = SAVE_DIR / Path(path).name
-    if Path(path).resolve() != dst.resolve():
+    if Path(path).resolve() != dst.resolve():  # 원본과 대상이 같은 파일이면 복사 생략
         shutil.copy(path, dst)
     return dst
 ```
@@ -138,6 +145,7 @@ size_rules.json에는 실습 A에서 정한 S/M/L 면적 경계, 기준선 위�
 ### 셀 3. 필요 파일 점검과 기준값(JSON) 불러오기
 
 ```python
+# 필요한 파일 이름 → 만든 실습(A/B)과 용도
 REQUIRED = {
     'box_seg_best.pt':   'A — 상자 세그멘테이션 모델',
     'conveyor_clip.mp4': 'A — 컨베이어 영상',
@@ -148,13 +156,15 @@ REQUIRED = {
     'lift_events.csv':   'B — 사후 분석 들기 동작',
     'posture_frames.csv':'B — 프레임별 각도와 상태',
 }
+# 파일마다 SAVE_DIR에 있는지 확인해 표(file, from, found)로 만듦
 status = pd.DataFrame([{'file': f, 'from': d, 'found': (SAVE_DIR / f).exists()} for f, d in REQUIRED.items()])
 display(status)
-missing = status.loc[~status['found'], 'file'].tolist()
-assert not missing, f'먼저 실습 A·B를 실행해 주세요. 없는 파일: {missing}'
+missing = status.loc[~status['found'], 'file'].tolist()  # found가 False인 파일 이름만 (~: True/False 뒤집기)
+assert not missing, f'먼저 실습 A·B를 실행해 주세요. 없는 파일: {missing}'  # 빠진 파일이 있으면 목록을 보여 주고 멈춤
 
-SIZE_RULES = json.load(open(SAVE_DIR / 'size_rules.json'))
-LIFT_RULES = json.load(open(SAVE_DIR / 'lift_rules.json'))
+# 앞 실습에서 정한 기준값(JSON)을 딕셔너리로 읽기
+SIZE_RULES = json.load(open(SAVE_DIR / 'size_rules.json'))  # 실습 A: S/M/L 면적 기준, 기준선 line_x, conf 등
+LIFT_RULES = json.load(open(SAVE_DIR / 'lift_rules.json'))  # 실습 B: 자세 각도 기준, 들기 시작·끝 기준 등
 print('SIZE_RULES:', SIZE_RULES)
 print('LIFT_RULES:', LIFT_RULES)
 ```
@@ -195,30 +205,36 @@ import cv2
 import numpy as np
 
 # ---------------- 공통: 그리기
-SIZE_COLOR = {'S': (255, 200, 0), 'M': (0, 200, 255), 'L': (60, 60, 255)}
-STATE_COLOR = {'UPRIGHT': (80, 175, 76), 'BENDING': (0, 179, 255), 'SQUAT': (154, 166, 38),
+# 그리기 색 — OpenCV용이라 (B, G, R) 순서
+SIZE_COLOR = {'S': (255, 200, 0), 'M': (0, 200, 255), 'L': (60, 60, 255)}  # 상자 크기별 색
+STATE_COLOR = {'UPRIGHT': (80, 175, 76), 'BENDING': (0, 179, 255), 'SQUAT': (154, 166, 38),  # 자세 상태별 색
                'STOOP': (53, 57, 229), 'NOT_STANDING': (158, 158, 158), 'UNKNOWN': (200, 200, 200)}
-GRADE_COLOR = {'HIGH': (53, 57, 229), 'MEDIUM': (0, 179, 255), 'LOW': (71, 160, 67)}
+GRADE_COLOR = {'HIGH': (53, 57, 229), 'MEDIUM': (0, 179, 255), 'LOW': (71, 160, 67)}  # 위험 등급별 색
+# 골격 선으로 이을 COCO 키포인트 번호 쌍 (5·6 어깨, 11·12 엉덩이, 15·16 발목)
 SKELETON = [(5, 7), (7, 9), (6, 8), (8, 10), (5, 6), (5, 11), (6, 12), (11, 12),
             (11, 13), (13, 15), (12, 14), (14, 16), (0, 5), (0, 6)]
 
+# 검은 배경 상자 위에 글자 쓰기 — 밝은 배경에서도 잘 보이게 (org: 글자 왼쪽 아래 좌표)
 def put_label(img, text, org, color, scale=0.6, thick=2):
-    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
-    cv2.rectangle(img, (org[0] - 5, org[1] - th - 6), (org[0] + tw + 5, org[1] + 6), (0, 0, 0), -1)
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)  # 글자 폭·높이(px) 측정
+    cv2.rectangle(img, (org[0] - 5, org[1] - th - 6), (org[0] + tw + 5, org[1] + 6), (0, 0, 0), -1)  # 두께 -1 = 속을 채운 사각형
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, thick)
 
+# 골격 선 그리기 — 양 끝 관절 신뢰도가 모두 min_conf보다 클 때만
 def draw_skeleton(img, kxy, kconf, color, min_conf=0.3):
     for a, b in SKELETON:
         if kconf[a] > min_conf and kconf[b] > min_conf:
-            cv2.line(img, tuple(map(int, kxy[a])), tuple(map(int, kxy[b])), color, 3)
+            cv2.line(img, tuple(map(int, kxy[a])), tuple(map(int, kxy[b])), color, 3)  # 좌표를 정수 튜플로 바꿔 선 긋기
 
 # ---------------- 실습 A: 상자 크기
+# 마스크 다각형 → (면적, 긴 변, 짧은 변), 모두 픽셀 단위
 def measure_mask(poly):
-    pts = np.asarray(poly, np.float32)
-    area = float(cv2.contourArea(pts))
-    w, h = cv2.minAreaRect(pts)[1]
+    pts = np.asarray(poly, np.float32)  # OpenCV가 받는 float32 배열로 변환
+    area = float(cv2.contourArea(pts))  # 다각형 넓이 (px²)
+    w, h = cv2.minAreaRect(pts)[1]  # 최소 외접 회전 사각형의 (폭, 높이)
     return area, float(max(w, h)), float(min(w, h))
 
+# 면적 → 'S'/'M'/'L' (small_max·medium_max 기준)
 def size_class(area, rules):
     if area <= rules['small_max']:
         return 'S'
@@ -229,59 +245,69 @@ def size_class(area, rules):
 class OnlineSizeCounter:
     """트랙별 관측을 쌓다가 기준선을 넘는 순간 크기를 확정하고 이벤트를 돌려준다"""
     def __init__(self, rules, min_samples=3):
-        self.rules, self.min_samples = rules, min_samples
-        self.samples, self.last_x, self.size_of = {}, {}, {}
-        self.counts = {'S': 0, 'M': 0, 'L': 0}
+        self.rules, self.min_samples = rules, min_samples  # min_samples: 크기 확정에 쓸 최소 관측 수
+        self.samples, self.last_x, self.size_of = {}, {}, {}  # 트랙별 관측 목록, 직전 중심 x, 확정 크기
+        self.counts = {'S': 0, 'M': 0, 'L': 0}  # 크기별 누적 개수
 
+    # 관측 1개 추가. 기준선을 넘는 순간이면 확정 이벤트(dict), 아니면 None
+    # key: 트랙 구분 키, cx: 박스 중심 x, at_edge: 화면 가장자리에 걸렸는지
     def update(self, key, cx, area, at_edge):
-        self.samples.setdefault(key, []).append((area, at_edge))
-        prev, self.last_x[key] = self.last_x.get(key), cx
+        self.samples.setdefault(key, []).append((area, at_edge))  # 처음 보는 key면 빈 목록부터 만들고 추가
+        prev, self.last_x[key] = self.last_x.get(key), cx  # 직전 x를 꺼내고 지금 x로 갱신
         line = self.rules['line_x']
-        if prev is None or key in self.size_of:
+        if prev is None or key in self.size_of:  # 첫 관측이거나 이미 확정된 트랙은 건너뜀
             return None
-        if not (prev < line <= cx or prev >= line > cx):
+        if not (prev < line <= cx or prev >= line > cx):  # 이번 프레임에 기준선을 넘지 않았으면 대기
             return None
-        full = [a for a, e in self.samples[key] if not e]
-        use = full if len(full) >= self.min_samples else [a for a, _ in self.samples[key]]
-        area_med = float(np.median(use))
+        full = [a for a, e in self.samples[key] if not e]  # 가장자리에 걸리지 않은 온전한 관측만
+        use = full if len(full) >= self.min_samples else [a for a, _ in self.samples[key]]  # 온전한 관측이 부족하면 전체 관측 사용
+        area_med = float(np.median(use))  # 면적 중앙값 — 튀는 값에 덜 흔들림
         size = size_class(area_med, self.rules)
         self.size_of[key] = size
         self.counts[size] += 1
         return {'size_class': size, 'area_px': round(area_med),
                 'direction': 'left_to_right' if cx >= line else 'right_to_left', 'n_obs': len(use)}
 
+    # counter.total처럼 괄호 없이 읽는 S/M/L 합계
     @property
     def total(self):
         return sum(self.counts.values())
 
 # ---------------- 실습 B: 자세와 들기 동작
+# 몸 왼쪽·오른쪽 관절의 COCO 키포인트 번호
 LEFT = dict(shoulder=5, elbow=7, wrist=9, hip=11, knee=13, ankle=15)
 RIGHT = dict(shoulder=6, elbow=8, wrist=10, hip=12, knee=14, ankle=16)
 
+# b를 꼭짓점으로 하는 각 abc의 크기(도) — 예: 엉덩이-무릎-발목 = 무릎 각도
+# np.clip으로 cos를 -1~1 범위에 가둬 arccos 오류 방지
 def joint_angle(a, b, c):
-    ba, bc = np.asarray(a, float) - np.asarray(b, float), np.asarray(c, float) - np.asarray(b, float)
-    cos = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-9)
+    ba, bc = np.asarray(a, float) - np.asarray(b, float), np.asarray(c, float) - np.asarray(b, float)  # b→a, b→c 벡터
+    cos = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-9)  # 내적으로 cos 계산, 1e-9는 0으로 나누기 방지
     return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
 
+# 아래 점→위 점 벡터가 수직 위쪽에서 몇 도 기울었는지 (0도 = 똑바로)
 def tilt_from_vertical(lower, upper):
     v = np.asarray(upper, float) - np.asarray(lower, float)
-    cos = np.dot(v, [0.0, -1.0]) / (np.linalg.norm(v) + 1e-9)
+    cos = np.dot(v, [0.0, -1.0]) / (np.linalg.norm(v) + 1e-9)  # [0, -1] = 이미지의 위쪽 (y는 아래로 커짐)
     return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
 
+# 키포인트 → 몸통 기울기(trunk), 무릎 각도(knee), 정강이 기울기(shin)
+# kxy: 좌표(17×2), kconf: 신뢰도(17). 주요 관절이 흐리면 None
 def body_angles(kxy, kconf, min_conf=0.3):
-    l_score, r_score = kconf[list(LEFT.values())].mean(), kconf[list(RIGHT.values())].mean()
-    idx = LEFT if l_score >= r_score else RIGHT
-    if kconf[[idx['shoulder'], idx['hip'], idx['knee'], idx['ankle']]].min() < min_conf:
+    l_score, r_score = kconf[list(LEFT.values())].mean(), kconf[list(RIGHT.values())].mean()  # 왼쪽·오른쪽 관절 신뢰도 평균
+    idx = LEFT if l_score >= r_score else RIGHT  # 더 잘 보이는 쪽 몸을 사용
+    if kconf[[idx['shoulder'], idx['hip'], idx['knee'], idx['ankle']]].min() < min_conf:  # 어깨·엉덩이·무릎·발목 중 하나라도 흐리면 포기
         return None
-    p = {n: kxy[i] for n, i in idx.items()}
+    p = {n: kxy[i] for n, i in idx.items()}  # 관절 이름 → (x, y) 좌표
     return {'trunk': tilt_from_vertical(p['hip'], p['shoulder']),
             'knee': joint_angle(p['hip'], p['knee'], p['ankle']),
             'shin': tilt_from_vertical(p['ankle'], p['knee'])}
 
+# 각도 → 자세 상태. 위에서부터 차례로 검사하므로 순서가 중요
 def classify_posture(trunk, knee, shin, rules):
-    if any(v is None or np.isnan(v) for v in (trunk, knee, shin)):
+    if any(v is None or np.isnan(v) for v in (trunk, knee, shin)):  # 각도가 비어 있으면 판정 불가
         return 'UNKNOWN'
-    if shin > rules['shin_standing']:
+    if shin > rules['shin_standing']:  # 정강이가 많이 기움 → 서 있지 않음
         return 'NOT_STANDING'
     if trunk <= rules['trunk_upright']:
         return 'UPRIGHT'
@@ -291,62 +317,68 @@ def classify_posture(trunk, knee, shin, rules):
         return 'SQUAT'
     return 'BENDING'
 
+# 들기 1회 위험 점수 0~100 = 몸통(최대 50) + 무릎(30) + STOOP 시간(20)
+# np.clip(…, 0, 1): 각 항목을 0~1로 잘라 항목별 상한 고정
 def risk_score(max_trunk, knee_bottom, stoop_s):
     return int(round(np.clip((max_trunk - 20) / 50, 0, 1) * 50 + np.clip((knee_bottom - 120) / 50, 0, 1) * 30
                      + np.clip(stoop_s / 2.0, 0, 1) * 20))
 
+# 점수 → 'HIGH' / 'MEDIUM' / 'LOW' (high_risk·medium_risk 기준)
 def risk_grade(score, rules):
     return 'HIGH' if score >= rules['high_risk'] else 'MEDIUM' if score >= rules['medium_risk'] else 'LOW'
 
 class EMA:
     """지수 이동 평균. 값이 비면(None/NaN) max_gap 프레임까지 직전 값을 유지"""
     def __init__(self, alpha=0.35, max_gap=6):
-        self.alpha, self.max_gap, self.value, self.gap = alpha, max_gap, None, 0
+        self.alpha, self.max_gap, self.value, self.gap = alpha, max_gap, None, 0  # value: 현재 평균, gap: 연속 빈 값 수
 
     def update(self, x):
-        if x is None or np.isnan(x):
+        if x is None or np.isnan(x):  # 이번 값이 비었으면 (검출 실패)
             self.gap += 1
-            if self.gap > self.max_gap:
+            if self.gap > self.max_gap:  # 너무 오래 비면 평균을 버림
                 self.value = None
             return self.value
         self.gap = 0
-        self.value = x if self.value is None else self.alpha * x + (1 - self.alpha) * self.value
+        self.value = x if self.value is None else self.alpha * x + (1 - self.alpha) * self.value  # 첫 값은 그대로, 이후 새 값과 이전 평균을 alpha 비율로 섞음
         return self.value
 
 class OnlinePosture:
     """프레임마다 각도를 받아 다듬고, 자세 상태와 들기 동작 이벤트를 돌려준다"""
     def __init__(self, fps, rules, alpha=0.35, hold_sec=0.5):
         self.fps, self.rules = fps, rules
-        self.ema = {k: EMA(alpha, int(0.2 * fps)) for k in ('trunk', 'knee', 'shin')}
-        self.alarm_need, self.alarm_run = max(1, int(round(fps * hold_sec))), 0
-        self.in_lift, self.lift_frames, self.lifts = False, [], []
-        self.frame = -1
+        self.ema = {k: EMA(alpha, int(0.2 * fps)) for k in ('trunk', 'knee', 'shin')}  # 각도마다 EMA 하나, 빈 값 유지 약 0.2초
+        self.alarm_need, self.alarm_run = max(1, int(round(fps * hold_sec))), 0  # 경고까지 필요한 STOOP 연속 프레임 수(약 hold_sec초)
+        self.in_lift, self.lift_frames, self.lifts = False, [], []  # 들기 진행 여부, 진행 중 프레임 기록, 확정된 들기 목록
+        self.frame = -1  # update마다 1씩 증가 → 첫 프레임 번호 0
 
+    # 프레임 1장 판정. angles: body_angles 결과(dict 또는 None)
+    # 반환: 각도·상태·경고 여부·들기 이벤트(확정된 순간에만 dict)
     def update(self, angles):
         self.frame += 1
-        vals = {k: e.update(None if angles is None else angles[k]) for k, e in self.ema.items()}
-        trunk, knee, shin = (np.nan if vals[k] is None else vals[k] for k in ('trunk', 'knee', 'shin'))
+        vals = {k: e.update(None if angles is None else angles[k]) for k, e in self.ema.items()}  # 각도를 EMA로 다듬기 (None이면 직전 값 유지)
+        trunk, knee, shin = (np.nan if vals[k] is None else vals[k] for k in ('trunk', 'knee', 'shin'))  # None → NaN으로 바꿔 판정 함수에 넘김
         state = classify_posture(trunk, knee, shin, self.rules)
-        self.alarm_run = self.alarm_run + 1 if state == 'STOOP' else 0
+        self.alarm_run = self.alarm_run + 1 if state == 'STOOP' else 0  # STOOP가 이어진 프레임 수, 끊기면 0
         event = None
-        if state not in ('NOT_STANDING', 'UNKNOWN'):
-            if not self.in_lift and trunk > self.rules['start_trunk']:
+        if state not in ('NOT_STANDING', 'UNKNOWN'):  # 판정 불가·서 있지 않은 프레임은 동작 기록에서 제외
+            if not self.in_lift and trunk > self.rules['start_trunk']:  # 허리를 숙이기 시작 → 들기 시작
                 self.in_lift, self.lift_frames = True, []
             if self.in_lift:
-                self.lift_frames.append((self.frame, trunk, knee, state))
-                if trunk < self.rules['end_trunk']:
+                self.lift_frames.append((self.frame, trunk, knee, state))  # (프레임 번호, 몸통, 무릎, 상태) 기록
+                if trunk < self.rules['end_trunk']:  # 다시 섰으면 동작 하나 확정
                     event = self._close()
         return {'trunk': trunk, 'knee': knee, 'state': state, 'warning': self.alarm_run >= self.alarm_need,
                 'in_lift': self.in_lift, 'lift_event': event}
 
+    # 진행 중이던 들기를 끝내고 이벤트로 확정 (너무 짧으면 None)
     def _close(self):
         self.in_lift = False
         frames = self.lift_frames
-        if len(frames) / self.fps < self.rules['min_lift_s']:
+        if len(frames) / self.fps < self.rules['min_lift_s']:  # 프레임 수 ÷ fps = 지속 시간(초)
             return None
-        b = max(frames, key=lambda f: f[1])
-        stoop_s = sum(f[3] == 'STOOP' for f in frames) / self.fps
-        if b[1] >= self.rules['trunk_stoop'] and b[2] >= self.rules['knee_straight']:
+        b = max(frames, key=lambda f: f[1])  # 몸통을 가장 많이 숙인 프레임 (f[1] = trunk)
+        stoop_s = sum(f[3] == 'STOOP' for f in frames) / self.fps  # STOOP였던 프레임 수 → 초
+        if b[1] >= self.rules['trunk_stoop'] and b[2] >= self.rules['knee_straight']:  # b[1] 몸통 각도, b[2] 무릎 각도
             lift_type = 'STOOP'
         elif b[2] < self.rules['knee_straight']:
             lift_type = 'SQUAT'
@@ -360,19 +392,22 @@ class OnlinePosture:
         return ev
 
 # ---------------- 검증용 가상 작업자 (실습 B와 같은 방식)
+# 가상 작업자 신체 길이(px) — 정강이, 허벅지, 몸통, 위팔, 아래팔
 SEG_LEN = dict(shin=95, thigh=95, torso=130, upper_arm=70, forearm=65)
 
+# 몸통 기울기·무릎 굽힘 각도 → 가상 키포인트 (kxy 17×2, kconf 17)
+# ankle: 발목 위치(px). 팔은 아래로 늘어뜨린 자세
 def synth_pose(trunk_deg, bend_deg, ankle=(200, 420)):
-    s, t = np.radians(bend_deg), np.radians(trunk_deg)
+    s, t = np.radians(bend_deg), np.radians(trunk_deg)  # 도 → 라디안 (sin·cos 계산용)
     ankle = np.array(ankle, float)
-    knee = ankle + SEG_LEN['shin'] * np.array([np.sin(s), -np.cos(s)])
+    knee = ankle + SEG_LEN['shin'] * np.array([np.sin(s), -np.cos(s)])  # 발목에서 정강이 길이만큼 위로
     hip = knee + SEG_LEN['thigh'] * np.array([-np.sin(s), -np.cos(s)])
     shoulder = hip + SEG_LEN['torso'] * np.array([np.sin(t), -np.cos(t)])
     elbow = shoulder + [0, SEG_LEN['upper_arm']]
     wrist = elbow + [0, SEG_LEN['forearm']]
-    kxy, kconf = np.zeros((17, 2)), np.zeros(17)
+    kxy, kconf = np.zeros((17, 2)), np.zeros(17)  # COCO 17개 키포인트, 처음엔 모두 0
     for name, p in dict(shoulder=shoulder, elbow=elbow, wrist=wrist, hip=hip, knee=knee, ankle=ankle).items():
-        kxy[RIGHT[name]] = p; kconf[RIGHT[name]] = 1.0
+        kxy[RIGHT[name]] = p; kconf[RIGHT[name]] = 1.0  # 오른쪽 관절만 채우고 신뢰도 1.0
     return kxy, kconf
 ```
 
@@ -411,10 +446,10 @@ Writing logistics_kit.py 한 줄이 출력되고, 작업 폴더에 모듈 파일
 ### 셀 5. 만든 모듈 불러오기
 
 ```python
-sys.path.insert(0, '.')
-import logistics_kit as lk
-importlib.reload(lk)
-print('모듈 불러오기 완료:', [n for n in dir(lk) if not n.startswith('_')][:12], '...')
+sys.path.insert(0, '.')  # 현재 폴더를 모듈 검색 경로 맨 앞에 추가
+import logistics_kit as lk  # lk라는 짧은 이름으로 불러오기
+importlib.reload(lk)  # 모듈 파일을 고친 뒤 최신 내용으로 다시 읽기
+print('모듈 불러오기 완료:', [n for n in dir(lk) if not n.startswith('_')][:12], '...')  # 모듈 안 공개 이름 12개 미리보기
 ```
 
 **코드 설명**
@@ -443,35 +478,38 @@ OnlineSizeCounter가 트랙 전체의 중앙값이 아니라 기준선 통과 �
 ### 셀 6. 가상 작업자의 들기 3번을 프레임 단위로 넣어 이벤트 확인
 
 ```python
+# (시각 초, 몸통 각도, 무릎 굽힘 각도) 키프레임
+# 들기 3번: 허리 굽혀(1.8~2.4초) → 무릎 굽혀(5.0~5.6초) → 허리 굽혀 오래(8.2~9.8초)
 KEYFRAMES = [(0.0, 5, 3), (1.0, 5, 3), (1.8, 75, 4), (2.4, 75, 4), (3.2, 5, 3),
              (4.2, 5, 3), (5.0, 35, 45), (5.6, 35, 45), (6.4, 5, 3),
              (7.4, 5, 3), (8.2, 65, 6), (9.8, 65, 6), (10.6, 5, 3), (11.5, 5, 3)]
-SYN_FPS = 30
-rng = np.random.default_rng(0)
-ts, tr, bd = map(np.array, zip(*KEYFRAMES))
+SYN_FPS = 30  # 가상 영상 초당 프레임 수
+rng = np.random.default_rng(0)  # 난수 시드 고정 → 매번 같은 결과
+ts, tr, bd = map(np.array, zip(*KEYFRAMES))  # 키프레임을 시각·몸통·굽힘 배열 3개로 분리
 
-online = lk.OnlinePosture(SYN_FPS, LIFT_RULES)
+online = lk.OnlinePosture(SYN_FPS, LIFT_RULES)  # 실시간 판정기 (fps, 판정 기준)
 trace, events = [], []
-for i in range(int(ts[-1] * SYN_FPS) + 1):
+for i in range(int(ts[-1] * SYN_FPS) + 1):  # 0초부터 마지막 키프레임까지 한 프레임씩
     t = i / SYN_FPS
-    kxy, kconf = lk.synth_pose(np.interp(t, ts, tr), np.interp(t, ts, bd))
-    kxy = kxy + rng.normal(0, 1.5, kxy.shape)
-    a = lk.body_angles(kxy, kconf * (rng.random() > 0.05))
-    out = online.update(a)
-    trace.append({'time_s': t, 'trunk_raw': a['trunk'] if a else np.nan, 'trunk_ema': out['trunk']})
-    if out['lift_event']:
+    kxy, kconf = lk.synth_pose(np.interp(t, ts, tr), np.interp(t, ts, bd))  # np.interp: 키프레임 사이 각도를 선형 보간
+    kxy = kxy + rng.normal(0, 1.5, kxy.shape)  # 좌표에 표준편차 1.5px 잡음 → 검출 떨림 흉내
+    a = lk.body_angles(kxy, kconf * (rng.random() > 0.05))  # 약 5% 프레임은 신뢰도 0 → 검출 실패 흉내
+    out = online.update(a)  # 프레임 1장 판정
+    trace.append({'time_s': t, 'trunk_raw': a['trunk'] if a else np.nan, 'trunk_ema': out['trunk']})  # 그래프용 원래 각도와 EMA 값 기록
+    if out['lift_event']:  # 들기가 끝나 확정된 순간에만 값이 있음
         events.append({**out['lift_event'], 'announced_s': round(t, 2)})
 
 events = pd.DataFrame(events)
 display(events[['lift_id', 'lift_type', 'max_trunk_deg', 'knee_at_bottom_deg', 'risk_score', 'risk_grade', 'announced_s']])
-assert events['lift_type'].tolist() == ['STOOP', 'SQUAT', 'STOOP'], events['lift_type'].tolist()
+assert events['lift_type'].tolist() == ['STOOP', 'SQUAT', 'STOOP'], events['lift_type'].tolist()  # 세 동작 유형 자동 확인 (다르면 멈춤)
 print('실시간 로직도 들기 3번을 기대한 유형으로 판정했습니다.')
 
 trace = pd.DataFrame(trace)
+# 회색 = 원래 각도, 파랑 = EMA, 빨간 점선 = 이벤트 확정 시각
 plt.figure(figsize=(10, 3))
 plt.plot(trace['time_s'], trace['trunk_raw'], c='lightgray', label='raw')
 plt.plot(trace['time_s'], trace['trunk_ema'], c='tab:blue', lw=2, label='EMA (online)')
-for _, e in events.iterrows():
+for _, e in events.iterrows():  # 표의 행을 (인덱스, 행) 쌍으로 하나씩 꺼냄
     plt.axvline(e['announced_s'], c='red', ls='--', lw=1)
     plt.text(e['announced_s'], 80, f" #{e['lift_id']} {e['lift_type']}", color='red', fontsize=8)
 plt.xlabel('time (s)'); plt.ylabel('trunk tilt (deg)'); plt.legend(); plt.grid(alpha=.3)
@@ -500,18 +538,19 @@ plt.title('Online lift events are announced when each lift ends (red lines)'); p
 ### 셀 7. 실습 B의 프레임별 각도 기록으로 사후 분석과 비교
 
 ```python
-pf = pd.read_csv(SAVE_DIR / 'posture_frames.csv')
-offline_lifts = pd.read_csv(SAVE_DIR / 'lift_events.csv')
-B_FPS = 1 / pf['time_s'].diff().median() if len(pf) > 1 else 30
+pf = pd.read_csv(SAVE_DIR / 'posture_frames.csv')  # 실습 B의 프레임별 시각·각도 기록
+offline_lifts = pd.read_csv(SAVE_DIR / 'lift_events.csv')  # 실습 B 사후 분석의 들기 목록
+B_FPS = 1 / pf['time_s'].diff().median() if len(pf) > 1 else 30  # 기록 간격(diff) 중앙값으로 fps 역산
 
 online_b = lk.OnlinePosture(B_FPS, LIFT_RULES)
 online_events = []
-for _, row in pf.iterrows():
-    a = None if np.isnan(row['trunk_deg']) else {'trunk': row['trunk_deg'], 'knee': row['knee_deg'], 'shin': row['shin_deg']}
+for _, row in pf.iterrows():  # 기록을 프레임 순서대로 한 줄씩 넣기
+    a = None if np.isnan(row['trunk_deg']) else {'trunk': row['trunk_deg'], 'knee': row['knee_deg'], 'shin': row['shin_deg']}  # 사람 미검출 프레임(NaN)은 None으로
     out = online_b.update(a)
     if out['lift_event']:
         online_events.append(out['lift_event'])
 
+# 두 방식의 동작 수와 유형 목록을 나란히 비교
 compare_b = pd.DataFrame({'method': ['offline (B)', 'online'],
                           'lifts': [len(offline_lifts), len(online_events)],
                           'types': [offline_lifts['lift_type'].tolist(), [e['lift_type'] for e in online_events]]})
@@ -548,27 +587,28 @@ compare_b
 ### 셀 8. 시각 기준 영상 리더(LoopReader)와 화면 맞춤 함수 정의
 
 ```python
-OUT_FPS = 15
-MAX_DURATION_S = 40
+OUT_FPS = 15  # 관제 영상 초당 프레임 수 (높이면 부드럽지만 처리 시간 증가)
+MAX_DURATION_S = 40  # 관제 영상 최대 길이(초) — 줄이면 실행이 빨라짐
 
 class LoopReader:
     """시각 t에 해당하는 프레임을 돌려주는 리더. 영상이 끝나면 처음부터 다시 재생"""
     def __init__(self, path):
         self.path = str(path)
         cap = cv2.VideoCapture(self.path)
-        self.fps = cap.get(cv2.CAP_PROP_FPS) or 30
-        self.n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.fps = cap.get(cv2.CAP_PROP_FPS) or 30  # fps를 못 읽으면(0) 30 사용
+        self.n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))  # 전체 프레임 수
         cap.release()
-        self.duration = self.n / self.fps
-        self.cap, self.pos, self.frame = None, -1, None
+        self.duration = self.n / self.fps  # 영상 길이(초)
+        self.cap, self.pos, self.frame = None, -1, None  # 열린 영상, 마지막으로 읽은 프레임 번호, 그 프레임
 
+    # 시각 t(초)의 (프레임, 반복 회차)를 돌려줌
     def read_at(self, t):
-        loop, idx = divmod(int(t * self.fps), self.n)
-        if self.cap is None or idx < self.pos:
+        loop, idx = divmod(int(t * self.fps), self.n)  # 전체 프레임 번호 ÷ n → (반복 회차, 그 안의 번호)
+        if self.cap is None or idx < self.pos:  # 처음이거나 영상이 처음으로 돌아갔으면 새로 열기
             if self.cap is not None:
                 self.cap.release()
             self.cap, self.pos = cv2.VideoCapture(self.path), -1
-        while self.pos < idx:
+        while self.pos < idx:  # 원하는 프레임까지 차례로 읽기 (건너뛰기보다 정확)
             ok, f = self.cap.read()
             if not ok:
                 break
@@ -577,16 +617,16 @@ class LoopReader:
 
 def fit_panel(img, w, h):
     """비율을 지키며 w×h 칸에 맞추고 남는 곳은 검게"""
-    s = min(w / img.shape[1], h / img.shape[0])
+    s = min(w / img.shape[1], h / img.shape[0])  # 가로·세로 중 더 많이 줄여야 하는 쪽 배율
     r = cv2.resize(img, (int(img.shape[1] * s), int(img.shape[0] * s)))
-    canvas = np.zeros((h, w, 3), np.uint8)
-    y, x = (h - r.shape[0]) // 2, (w - r.shape[1]) // 2
-    canvas[y:y + r.shape[0], x:x + r.shape[1]] = r
+    canvas = np.zeros((h, w, 3), np.uint8)  # 검은 바탕 (높이, 폭, 색 3채널)
+    y, x = (h - r.shape[0]) // 2, (w - r.shape[1]) // 2  # 가운데에 놓을 왼쪽 위 좌표
+    canvas[y:y + r.shape[0], x:x + r.shape[1]] = r  # 배열 슬라이싱으로 그 자리에 붙여 넣기
     return canvas
 
 conv = LoopReader(SAVE_DIR / 'conveyor_clip.mp4')
 work = LoopReader(SAVE_DIR / 'lift_sample.mp4')
-DURATION_S = min(max(conv.duration, work.duration), MAX_DURATION_S)
+DURATION_S = min(max(conv.duration, work.duration), MAX_DURATION_S)  # 긴 영상에 맞추되 최대 길이 제한
 print(f'컨베이어 {conv.duration:.1f}초, 작업자 {work.duration:.1f}초 → 관제 영상 {DURATION_S:.1f}초 ({OUT_FPS}fps)')
 ```
 
@@ -607,78 +647,82 @@ print(f'컨베이어 {conv.duration:.1f}초, 작업자 {work.duration:.1f}초 �
 ### 셀 9. 관제 화면 생성 — 두 모델 실행, 이벤트 기록, 영상 합성
 
 ```python
-BEST = SAVE_DIR / 'box_seg_best.pt'
-pose_model = YOLO('yolo26n-pose.pt')
-IMGSZ = SIZE_RULES.get('imgsz', 640)
-EDGE = SIZE_RULES['edge_margin_px']
-CW, CH = 320, 640            # 컨베이어 칸
-WW, WH = 720, 640            # 작업자 칸
-HEADER = 84
+BEST = SAVE_DIR / 'box_seg_best.pt'  # 실습 A에서 학습한 상자 세그멘테이션 모델
+pose_model = YOLO('yolo26n-pose.pt')  # 사전학습 포즈 모델 (처음 실행 시 자동 다운로드)
+IMGSZ = SIZE_RULES.get('imgsz', 640)  # 추론 입력 크기, 기준값에 없으면 640
+EDGE = SIZE_RULES['edge_margin_px']  # 가장자리 여유(px) — 이 안에 걸린 상자는 잘린 것으로 봄
+CW, CH = 320, 640            # 컨베이어 칸 폭·높이(px)
+WW, WH = 720, 640            # 작업자 칸 폭·높이(px)
+HEADER = 84  # 위쪽 지표 막대 높이(px) → 전체 화면 1040×724
 
+# 위쪽 지표 막대 — 경과 시각, S/M/L 개수, 처리량, 들기 수, 최근 알림
 def draw_header(canvas, t, counter, posture_lifts, alert):
-    cv2.rectangle(canvas, (0, 0), (canvas.shape[1], HEADER), (30, 30, 30), -1)
+    cv2.rectangle(canvas, (0, 0), (canvas.shape[1], HEADER), (30, 30, 30), -1)  # 진한 회색으로 막대 바탕 채우기
     cv2.putText(canvas, f't={t:5.1f}s', (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
     x = 12
     for s in ['S', 'M', 'L']:
         cv2.putText(canvas, f'{s} {counter.counts[s]}', (x, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.9, lk.SIZE_COLOR[s], 2)
         x += 82
-    tput = counter.total / max(t, 1) * 60
+    tput = counter.total / max(t, 1) * 60  # 분당 처리량 추정 (1초 전에는 1초로 나눔)
     cv2.putText(canvas, f'BOXES {counter.total}  ({tput:.0f}/min)', (x + 6, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    high = sum(l['risk_grade'] == 'HIGH' for l in posture_lifts)
+    high = sum(l['risk_grade'] == 'HIGH' for l in posture_lifts)  # HIGH 등급 들기 수 (True를 1로 셈)
     cv2.putText(canvas, f'LIFTS {len(posture_lifts)}  HIGH RISK {high}', (CW + 300, 64),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
     if alert:
-        put = alert if len(alert) < 46 else alert[:45]
+        put = alert if len(alert) < 46 else alert[:45]  # 긴 알림은 45자까지만
         cv2.putText(canvas, put, (CW + 300, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (60, 60, 255), 2)
 
+# 두 카메라를 같은 시각 기준으로 처리해 관제 영상(dst) 생성
+# 반환: 상자 집계기, 자세 판정기, 이벤트 표
 def run_monitor(dst='monitor.mp4'):
-    global box_model
+    global box_model  # 영상 반복 때 모델을 새로 바꾸기 위해 전역 변수로
     box_model = YOLO(BEST)
     counter = lk.OnlineSizeCounter(SIZE_RULES)
-    posture = lk.OnlinePosture(OUT_FPS, LIFT_RULES)
-    writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), OUT_FPS, (CW + WW, CH + HEADER))
-    alerts, last_alert, prev_warn, conv_loop = [], (None, -99), False, 0
-    for i in range(int(DURATION_S * OUT_FPS)):
+    posture = lk.OnlinePosture(OUT_FPS, LIFT_RULES)  # 실제로 넣는 속도(OUT_FPS) 기준으로 시간 계산
+    writer = cv2.VideoWriter(dst, cv2.VideoWriter_fourcc(*'mp4v'), OUT_FPS, (CW + WW, CH + HEADER))  # mp4v 코덱, 크기 (폭, 높이)
+    alerts, last_alert, prev_warn, conv_loop = [], (None, -99), False, 0  # prev_warn: 직전 프레임 경고 여부
+    for i in range(int(DURATION_S * OUT_FPS)):  # 관제 영상 프레임 수만큼 반복
         t = i / OUT_FPS
         # ---- 컨베이어 카메라
-        fc, loop_c = conv.read_at(t)
+        fc, loop_c = conv.read_at(t)  # 시각 t의 컨베이어 프레임과 반복 회차
         if loop_c != conv_loop:                                   # 영상이 처음으로 돌아가면 트래커 새로 시작
             box_model, conv_loop = YOLO(BEST), loop_c
-        r = box_model.track(fc, persist=True, tracker='bytetrack.yaml', conf=SIZE_RULES['conf'],
-                            imgsz=IMGSZ, verbose=False)[0]
-        vis_c, overlay = fc.copy(), fc.copy()
-        if r.boxes.id is not None and r.masks is not None:
+        r = box_model.track(fc, persist=True, tracker='bytetrack.yaml', conf=SIZE_RULES['conf'],  # persist=True: 이전 프레임의 트랙 ID 유지
+                            imgsz=IMGSZ, verbose=False)[0]  # conf 미만 박스는 버림, [0] = 첫(유일한) 결과
+        vis_c, overlay = fc.copy(), fc.copy()  # 그림용 복사본 2장 (overlay는 반투명 칠하기용)
+        if r.boxes.id is not None and r.masks is not None:  # 추적 ID와 마스크가 있는 프레임만
+            # 상자마다 박스 좌표(x1, y1, x2, y2), 트랙 ID, 마스크 외곽 다각형
             for b, tid, poly in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.id.int().cpu().tolist(), r.masks.xy):
-                if len(poly) < 3:
+                if len(poly) < 3:  # 점이 3개 미만이면 면적 계산 불가
                     continue
-                key = (loop_c, tid)
-                area, _, _ = lk.measure_mask(poly)
-                at_edge = b[0] < EDGE or b[1] < EDGE or b[2] > fc.shape[1] - EDGE or b[3] > fc.shape[0] - EDGE
-                ev = counter.update(key, (b[0] + b[2]) / 2, area, at_edge)
+                key = (loop_c, tid)  # 반복 회차가 다르면 다른 상자로 셈
+                area, _, _ = lk.measure_mask(poly)  # 마스크 면적만 사용
+                at_edge = b[0] < EDGE or b[1] < EDGE or b[2] > fc.shape[1] - EDGE or b[3] > fc.shape[0] - EDGE  # 박스가 화면 가장자리 EDGE px 안에 걸렸는지
+                ev = counter.update(key, (b[0] + b[2]) / 2, area, at_edge)  # (x1 + x2) / 2 = 박스 중심 x
                 if ev:
                     alerts.append({'time_s': round(t, 2), 'source': 'conveyor', 'event': f"BOX_{ev['size_class']}",
                                    'detail': f"track {loop_c}-{tid}, area {ev['area_px']} px2, {ev['n_obs']} obs"})
-                size = counter.size_of.get(key)
-                cv2.fillPoly(overlay, [poly.astype(np.int32)], lk.SIZE_COLOR[size] if size else (170, 170, 170))
-        vis_c = cv2.addWeighted(overlay, 0.45, vis_c, 0.55, 0)
-        cv2.line(vis_c, (SIZE_RULES['line_x'], 0), (SIZE_RULES['line_x'], vis_c.shape[0]), (0, 255, 255), 2)
+                size = counter.size_of.get(key)  # 아직 확정 전이면 None
+                cv2.fillPoly(overlay, [poly.astype(np.int32)], lk.SIZE_COLOR[size] if size else (170, 170, 170))  # 확정 전 회색, 확정 후 크기 색
+        vis_c = cv2.addWeighted(overlay, 0.45, vis_c, 0.55, 0)  # 칠한 그림 45% + 원본 55% → 반투명
+        cv2.line(vis_c, (SIZE_RULES['line_x'], 0), (SIZE_RULES['line_x'], vis_c.shape[0]), (0, 255, 255), 2)  # 노란 세로 기준선
         lk.put_label(vis_c, 'CAM 1  CONVEYOR', (10, 24), (255, 255, 255), 0.55)
         # ---- 작업자 카메라
-        fw, _ = work.read_at(t)
-        rp = pose_model(fw, verbose=False)[0]
+        fw, _ = work.read_at(t)  # 시각 t의 작업자 프레임
+        rp = pose_model(fw, verbose=False)[0]  # 포즈 추론 (사람 박스 + 키포인트 17개)
         angles, person = None, None
-        if len(rp.boxes):
-            k = int(rp.boxes.xywh[:, 2:].prod(1).argmax())
-            person = (rp.keypoints.xy[k].cpu().numpy().astype(float), rp.keypoints.conf[k].cpu().numpy().astype(float))
-            angles = lk.body_angles(*person)
-        st = posture.update(angles)
+        if len(rp.boxes):  # 사람이 1명 이상 잡혔으면
+            k = int(rp.boxes.xywh[:, 2:].prod(1).argmax())  # 박스 넓이(w×h)가 가장 큰 사람 번호
+            person = (rp.keypoints.xy[k].cpu().numpy().astype(float), rp.keypoints.conf[k].cpu().numpy().astype(float))  # 그 사람의 키포인트 좌표(17×2)와 신뢰도(17)
+            angles = lk.body_angles(*person)  # *person: 튜플을 풀어 두 인자로 전달
+        st = posture.update(angles)  # 상태·경고·들기 이벤트 판정
         vis_w = fw.copy()
         if person is not None:
             lk.draw_skeleton(vis_w, *person, lk.STATE_COLOR[st['state']])
-        scale = max(0.6, min(vis_w.shape[:2]) / 720)
+        scale = max(0.6, min(vis_w.shape[:2]) / 720)  # 화면 크기에 맞춘 글자 배율
         lk.put_label(vis_w, 'CAM 2  WORKER', (12, int(30 * scale)), (255, 255, 255), 0.6 * scale)
         lk.put_label(vis_w, st['state'], (12, int(72 * scale)), lk.STATE_COLOR[st['state']], 0.8 * scale)
-        if st['warning'] and not prev_warn:
+        if st['warning'] and not prev_warn:  # 경고가 막 켜진 순간에만 기록
             alerts.append({'time_s': round(t, 2), 'source': 'worker', 'event': 'STOOP_WARNING',
                            'detail': f"trunk {st['trunk']:.0f} deg, knee {st['knee']:.0f} deg"})
         prev_warn = st['warning']
@@ -686,23 +730,23 @@ def run_monitor(dst='monitor.mp4'):
             e = st['lift_event']
             alerts.append({'time_s': round(t, 2), 'source': 'worker', 'event': f"LIFT_{e['lift_type']}",
                            'detail': f"lift {e['lift_id']}, risk {e['risk_score']} {e['risk_grade']}"})
-        if st['warning']:
+        if st['warning']:  # 경고 중에는 빨간 테두리
             cv2.rectangle(vis_w, (0, 0), (vis_w.shape[1] - 1, vis_w.shape[0] - 1), (0, 0, 255), 14)
         # ---- 합성
-        canvas = np.zeros((CH + HEADER, CW + WW, 3), np.uint8)
-        canvas[HEADER:, :CW] = fit_panel(vis_c, CW, CH)
-        canvas[HEADER:, CW:] = fit_panel(vis_w, WW, CH)
+        canvas = np.zeros((CH + HEADER, CW + WW, 3), np.uint8)  # 전체 화면 (높이, 폭, 3)
+        canvas[HEADER:, :CW] = fit_panel(vis_c, CW, CH)  # 왼쪽 칸: 컨베이어
+        canvas[HEADER:, CW:] = fit_panel(vis_w, WW, CH)  # 오른쪽 칸: 작업자
         recent = [a for a in alerts if t - a['time_s'] <= 2.0 and a['source'] == 'worker']   # 최근 2초 작업자 이벤트
         draw_header(canvas, t, counter, posture.lifts, f"ALERT {recent[-1]['event']} {recent[-1]['detail']}" if recent else '')
-        writer.write(canvas)
-    writer.release()
-    return counter, posture, pd.DataFrame(alerts, columns=['time_s', 'source', 'event', 'detail'])
+        writer.write(canvas)  # 완성된 화면을 영상에 한 프레임 추가
+    writer.release()  # 닫아야 파일이 완성됨
+    return counter, posture, pd.DataFrame(alerts, columns=['time_s', 'source', 'event', 'detail'])  # 열 이름 고정 → 이벤트가 없어도 같은 열
 
 counter, posture, alerts = run_monitor()
-alerts.to_csv('alerts_log.csv', index=False); save_out('alerts_log.csv'); save_out('monitor.mp4')
+alerts.to_csv('alerts_log.csv', index=False); save_out('alerts_log.csv'); save_out('monitor.mp4')  # 로그·영상 저장 후 Drive로 복사
 print('상자:', counter.counts, '| 들기:', len(posture.lifts), '| 이벤트:', len(alerts))
 show_video('monitor.mp4', width=780)
-alerts.head(15)
+alerts.head(15)  # 앞 15개 이벤트 보기
 ```
 
 **코드 설명**
@@ -741,19 +785,20 @@ alerts.head(15)
 ### 셀 10. 근무 요약 지표 계산과 shift_summary.json 저장
 
 ```python
-box_ev = alerts[alerts['source'] == 'conveyor'].copy()
-box_ev['size_class'] = box_ev['event'].str[-1]
-lift_ev = pd.DataFrame(posture.lifts)
-warn_ev = alerts[alerts['event'] == 'STOOP_WARNING']
+box_ev = alerts[alerts['source'] == 'conveyor'].copy()  # 상자 이벤트만 (.copy(): 원본 표와 분리)
+box_ev['size_class'] = box_ev['event'].str[-1]  # 'BOX_S'의 마지막 글자 → 'S'
+lift_ev = pd.DataFrame(posture.lifts)  # 확정된 들기 목록 → 표
+warn_ev = alerts[alerts['event'] == 'STOOP_WARNING']  # 허리 굽힘 경고만
 
+# 근무 요약 지표. **{…}는 boxes_S/M/L 키를 한 번에 펼쳐 넣음
 SUMMARY = {'duration_s': round(DURATION_S, 1),
            'boxes_total': counter.total, **{f'boxes_{k}': v for k, v in counter.counts.items()},
            'boxes_per_min': round(counter.total / DURATION_S * 60, 1),
            'lifts_total': len(lift_ev),
-           'lifts_stoop': int((lift_ev['lift_type'] == 'STOOP').sum()) if len(lift_ev) else 0,
+           'lifts_stoop': int((lift_ev['lift_type'] == 'STOOP').sum()) if len(lift_ev) else 0,  # 들기가 0건이면 열이 없으므로 0
            'lifts_high_risk': int((lift_ev['risk_grade'] == 'HIGH').sum()) if len(lift_ev) else 0,
            'stoop_warnings': len(warn_ev)}
-json.dump(SUMMARY, open('shift_summary.json', 'w'), indent=2); save_out('shift_summary.json')
+json.dump(SUMMARY, open('shift_summary.json', 'w'), indent=2); save_out('shift_summary.json')  # 다른 시스템이 읽을 수 있게 JSON 저장
 display(pd.DataFrame([SUMMARY]))
 ```
 
@@ -773,29 +818,34 @@ display(pd.DataFrame([SUMMARY]))
 ### 셀 11. 근무 리포트 그림(shift_report.png) 그리기
 
 ```python
-SIZE_HEX = {'S': '#00c8ff', 'M': '#ffc800', 'L': '#ff3c3c'}
+SIZE_HEX = {'S': '#00c8ff', 'M': '#ffc800', 'L': '#ff3c3c'}  # matplotlib용 RGB 색 (모듈의 BGR 색과 같은 색)
 GRADE_HEX = {'HIGH': '#e53935', 'MEDIUM': '#ffb300', 'LOW': '#43a047'}
 
 fig = plt.figure(figsize=(12, 6))
-gs = fig.add_gridspec(2, 3, height_ratios=[1.4, 1])
-ax = fig.add_subplot(gs[0, :])
+gs = fig.add_gridspec(2, 3, height_ratios=[1.4, 1])  # 2행 3열 격자, 윗줄을 더 높게
+ax = fig.add_subplot(gs[0, :])  # 윗줄 전체: 시간축 그래프
+# y=2 줄: 상자가 확정된 시각을 크기 색 점으로
 for s in ['S', 'M', 'L']:
     d = box_ev[box_ev['size_class'] == s]
     ax.scatter(d['time_s'], [2] * len(d), s=120, c=SIZE_HEX[s], edgecolor='k', label=f'box {s}', zorder=3)
+# y=1 줄: 들기 구간을 위험 등급 색 막대로 (프레임 ÷ fps = 초)
 for _, l in lift_ev.iterrows():
     s0, s1 = l['start_frame'] / OUT_FPS, l['end_frame'] / OUT_FPS
     ax.plot([s0, s1], [1, 1], lw=10, c=GRADE_HEX[l['risk_grade']], solid_capstyle='butt')
     ax.text((s0 + s1) / 2, 1.25, f"#{l['lift_id']} {l['lift_type']} {l['risk_score']}", ha='center', fontsize=8)
+# y=0.5 줄: 허리 굽힘 경고 시각 (빨간 삼각형)
 ax.scatter(warn_ev['time_s'], [0.5] * len(warn_ev), marker='v', s=90, c='red', label='stoop warning', zorder=3)
+# 누적 상자 수 계단 그래프 좌표 (np.r_: 배열 이어 붙이기)
 cum_t = np.r_[0, box_ev.sort_values('time_s')['time_s'], DURATION_S]
 cum_n = np.r_[0, np.arange(1, len(box_ev) + 1), len(box_ev)]
-ax2 = ax.twinx(); ax2.step(cum_t, cum_n, where='post', c='gray', lw=1)
+ax2 = ax.twinx(); ax2.step(cum_t, cum_n, where='post', c='gray', lw=1)  # 오른쪽 보조 y축에 누적 상자 수
 ax2.set_ylim(0, max(1, len(box_ev)) * 1.3); ax2.set_ylabel('cumulative boxes', color='gray')
 ax.set_yticks([0.5, 1, 2]); ax.set_yticklabels(['warnings', 'lifts', 'boxes'])
 ax.set_ylim(0, 2.6); ax.set_xlim(0, DURATION_S); ax.set_xlabel('time (s)'); ax.grid(axis='x', alpha=.3)
 ax.legend(loc='upper left', fontsize=8, ncol=4)
 ax.set_title(f"Shift report | {SUMMARY['boxes_total']} boxes ({SUMMARY['boxes_per_min']}/min), "
              f"{SUMMARY['lifts_total']} lifts, {SUMMARY['lifts_high_risk']} high risk, {SUMMARY['stoop_warnings']} warnings")
+# 아랫줄: 크기별 상자 수 / 들기별 위험 점수 / 요약 표
 ax_s = fig.add_subplot(gs[1, 0])
 ax_s.bar(['S', 'M', 'L'], [counter.counts[s] for s in 'SML'], color=[SIZE_HEX[s] for s in 'SML'])
 ax_s.set_title('Boxes by size')
@@ -805,10 +855,10 @@ if len(lift_ev):
 else:
     ax_l.text(0.5, 50, 'no lifts detected', ha='center', color='gray')
 ax_l.set_ylim(0, 100); ax_l.set_title('Risk per lift'); ax_l.set_xlabel('lift #')
-ax_c = fig.add_subplot(gs[1, 2]); ax_c.axis('off')
+ax_c = fig.add_subplot(gs[1, 2]); ax_c.axis('off')  # 표만 넣을 칸이라 축 숨김
 rows = [[k, v] for k, v in SUMMARY.items()]
 ax_c.table(cellText=rows, colLabels=['kpi', 'value'], loc='center', cellLoc='left').scale(1, 1.15)
-plt.tight_layout(); plt.savefig('shift_report.png', dpi=120); save_out('shift_report.png'); plt.show()
+plt.tight_layout(); plt.savefig('shift_report.png', dpi=120); save_out('shift_report.png'); plt.show()  # show 전에 저장 (show 후엔 빈 그림)
 ```
 
 **코드 설명**
@@ -829,17 +879,18 @@ plt.tight_layout(); plt.savefig('shift_report.png', dpi=120); save_out('shift_re
 ### 셀 12. 첫 재생 구간을 사후 분석 결과와 대조
 
 ```python
-offline_box = pd.read_csv(SAVE_DIR / 'box_size_log.csv')
-first_pass_box = box_ev[box_ev['time_s'] < conv.duration]
-first_pass_lifts = lift_ev[lift_ev['end_frame'] / OUT_FPS < work.duration] if len(lift_ev) else lift_ev
+offline_box = pd.read_csv(SAVE_DIR / 'box_size_log.csv')  # 실습 A 사후 분석의 상자별 크기 기록
+first_pass_box = box_ev[box_ev['time_s'] < conv.duration]  # 컨베이어 영상 1회분 이벤트만
+first_pass_lifts = lift_ev[lift_ev['end_frame'] / OUT_FPS < work.duration] if len(lift_ev) else lift_ev  # 작업자 영상 1회분 안에서 끝난 들기만
 
+# 항목별 사후(offline)·실시간(online) 개수 비교 표
 check = pd.DataFrame([
     {'item': 'boxes (first pass)', 'offline': len(offline_box), 'online': len(first_pass_box)},
-    *[{'item': f'boxes {s}', 'offline': int((offline_box['size_class'] == s).sum()),
+    *[{'item': f'boxes {s}', 'offline': int((offline_box['size_class'] == s).sum()),  # *[…]: 리스트를 풀어 S/M/L 행 3개 추가
        'online': int((first_pass_box['size_class'] == s).sum())} for s in 'SML'],
     {'item': 'lifts (first pass)', 'offline': len(offline_lifts), 'online': len(first_pass_lifts)},
 ])
-check['diff'] = check['online'] - check['offline']
+check['diff'] = check['online'] - check['offline']  # 0이면 두 방식이 같은 답
 check
 ```
 
@@ -860,8 +911,8 @@ check
 ### 셀 13. 모듈을 Drive에 저장하고 결과 폴더 확인
 
 ```python
-save_out('logistics_kit.py')
-print(sorted(p.name for p in SAVE_DIR.iterdir()))
+save_out('logistics_kit.py')  # 모듈 파일도 Drive에 보관 (3회차에서 재사용)
+print(sorted(p.name for p in SAVE_DIR.iterdir()))  # 결과 폴더 파일 목록
 ```
 
 **코드 설명**
