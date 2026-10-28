@@ -1,0 +1,8 @@
+# YOLO 3회차 로컬 실습 패키지 (Python 3.10~3.12 권장)
+# 설치: pip install -r requirements.txt
+ultralytics>=8.4,<8.5   # YOLO (PyTorch CPU 버전이 함께 설치됨)
+lap                     # 추적(ByteTrack)이 박스를 짝지을 때 사용
+onnx                    # ONNX 형식으로 내보내기
+onnxruntime             # ONNX 모델 실행 엔진 (CPU)
+# 아래는 선택: 인텔 CPU에서 가장 빠른 경우가 많음 (설치 용량 약 100MB)
+# openvino
