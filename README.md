@@ -20,13 +20,15 @@ day2/guides/ 2회차 해설서(md) — 노트북 번호와 같은 번호
 day3/        3회차 로컬 실습 가이드(01)·Colab판(02)·산업 데모 노트북(03~06)
 day3/local/  내 PC에서 실행하는 파이썬 스크립트(01~04)와 requirements.txt
 workshop/    워크숍 안내서(01)와 시작 노트북(02)
-concepts/    개념 참고자료 (지표 읽는 법 등)
+concepts/    개념 참고자료 (지표 읽는 법, 말로 찾는 탐지기 YOLOE의 원리)
 */word/      같은 해설서의 Word(docx)·PDF 파일 — 내려받아 인쇄하거나 보관할 때
 ```
 
 해설서는 GitHub에서 **md 파일을 바로 열어 읽으면** 됩니다. `word/` 폴더는 같은 내용의 내려받기용 파일입니다.
 
 **참고자료** — [탐지 성능 지표 읽기: mAP와 혼동 행렬](concepts/01_yolo_metrics_mAP_confusion_v1.0.md) (IoU · TP/FP/FN · 정밀도/재현율 · PR 곡선 · mAP50/50-95 · Box vs Mask · 혼동 행렬을 실습 01·06 결과로 설명)
+
+**참고자료** — [말로 찾는 탐지기의 원리: VLM 입문과 YOLOE](concepts/02_yolo_vlm_yoloe_intro_v1.0.md) (닫힌/열린 어휘 · VLM 세 갈래 · 벡터와 코사인 유사도 · CLIP · YOLOE 내부 구조 · 텍스트/비주얼/프롬프트 없음 · 05·06 결과를 원리로 읽기 · 단어 고르는 요령)
 
 ---
 
@@ -67,6 +69,7 @@ concepts/    개념 참고자료 (지표 읽는 법 등)
 해설서에는 셀마다 코드, 코드 설명, 실행 결과, 막혔을 때 해결법이 있고 끝에 도전 과제·자주 겪는 문제·용어 정리가 있습니다. Word 파일은 [`day2/word/`](day2/word)에 같은 번호로 있습니다.
 
 - 03·04는 상자를 드는 동작을 옆에서 찍은 10~20초 영상(`lift_sample.mp4`)이 필요합니다. 휴대폰으로 직접 찍어 노트북의 파일 선택 창에서 올리면 되고, 아이폰 `.mov`도 그대로 쓸 수 있습니다. 찍는 요령은 [03 해설서](day2/guides/03_yolo_day2_pose_lab_guide_v1.3.md)에 있습니다.
+- 05·06은 YOLOE가 단어로 물체를 찾는 원리를 [참고자료 02](concepts/02_yolo_vlm_yoloe_intro_v1.0.md)에서 먼저 읽고 시작하면 결과를 이해하기 쉽습니다.
 - 05의 Step 4는 01에서 Drive에 저장한 모델(`MyDrive/yolo_day2/box_seg_best.pt`)을 사용합니다.
 - 무료 Colab은 GPU 사용 시간에 한도가 있습니다. 시간이 부족하면 노트북의 `QUICK_RUN = True`로 흐름만 먼저 확인하세요.
 
