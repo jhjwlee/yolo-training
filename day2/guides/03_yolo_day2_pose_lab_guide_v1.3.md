@@ -1,6 +1,6 @@
 # YOLO 2회차 실습 B — 상자 들기 동작 분석과 위험 자세 리포트
 
-노트북: [`03_yolo_day2_pose_lab_v1.3.ipynb`](../03_yolo_day2_pose_lab_v1.3.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/03_yolo_day2_pose_lab_v1.3.ipynb)
+노트북: [`03_yolo_day2_pose_lab_v1.4.ipynb`](../03_yolo_day2_pose_lab_v1.4.ipynb) · [Colab에서 열기](https://colab.research.google.com/github/jhjwlee/yolo-training/blob/main/day2/03_yolo_day2_pose_lab_v1.4.ipynb)
 
 | 항목 | 내용 |
 |---|---|
@@ -9,9 +9,9 @@
 | 사용 데이터 | lift_sample.mp4 — 작업자가 바닥의 상자를 들어 올리는 모습을 옆에서 찍은 실습 영상. 규칙 검증에는 코드로 만든 가상 작업자 데이터를 함께 사용 |
 | 주요 결과 파일 | posture_review.mp4, posture_frames.csv, lift_events.csv, lift_rules.json, lift_report.png (모두 SAVE_DIR에도 저장) |
 
-> **실습 영상 준비** — 노트북의 `USE_SAMPLE = True`(기본값)이면 실습 리포에 올라 있는 예시 영상(`day2/lift_sample.mp4`, `SAMPLE_NO = 2`면 `lift_sample_02.mp4`)을 자동으로 받으므로 따로 준비하지 않아도 됩니다. 직접 찍은 영상을 쓰려면 `USE_SAMPLE = False`로 바꿉니다. 휴대폰으로 작업자가 바닥의 상자를 들어 올리는 모습을 **옆에서, 허리 높이로, 머리부터 발끝까지** 10~20초 찍으면 됩니다. 들기 동작을 2~4번 넣고, 무릎을 편 채 허리만 굽혀 들기와 무릎을 굽혀 들기를 섞으면 차이가 잘 드러납니다. 아이폰 `.mov` 파일도 그대로 쓸 수 있습니다.
+> **실습 영상 준비** — `lift_sample.mp4`는 따로 내려받는 파일이 아니라 직접 준비하는 영상입니다. 휴대폰으로 작업자가 바닥의 상자를 들어 올리는 모습을 **옆에서, 허리 높이로, 머리부터 발끝까지** 10~20초 찍으면 됩니다. 들기 동작을 2~4번 넣고, 무릎을 편 채 허리만 굽혀 들기와 무릎을 굽혀 들기를 섞으면 차이가 잘 드러납니다. 아이폰 `.mov` 파일도 그대로 쓸 수 있습니다.
 
-> 내 영상을 넣는 방법은 두 가지입니다. ① `USE_SAMPLE = False`로 바꾸고 「0-1. 실습 영상 준비」 아래 코드 셀(이 해설서의 셀 5)을 실행하면 뜨는 파일 선택 창에서 고르기(이름은 자동으로 `lift_sample.mp4`로 바뀜) ② Google Drive의 `MyDrive/yolo_day2/` 폴더에 `lift_sample.mp4`라는 이름으로 미리 넣어 두기. 4K 영상은 업로드가 오래 걸리므로 1080p 정도로 찍는 것을 권합니다.
+> 영상을 넣는 방법은 두 가지입니다. ① 「0-1. 실습 영상 준비」 아래 코드 셀(이 해설서의 셀 5)을 실행하면 뜨는 파일 선택 창에서 고르기(이름은 자동으로 `lift_sample.mp4`로 바뀜) ② Google Drive의 `MyDrive/yolo_day2/` 폴더에 `lift_sample.mp4`라는 이름으로 미리 넣어 두기. 4K 영상은 업로드가 오래 걸리므로 1080p 정도로 찍는 것을 권합니다.
 
 ## 목차
 
@@ -187,24 +187,17 @@ def save_out(path):
 
 ```python
 VIDEO_NAME = 'lift_sample.mp4'  # 찾을 실습 영상 이름
-USE_SAMPLE = True   # ✏️ True: 없으면 예시 영상을 내려받음 / False: 내 영상을 업로드
-SAMPLE_NO = 1       # ✏️ 예시 영상 번호 (1 또는 2)
-SAMPLE_URL = {1: 'https://raw.githubusercontent.com/jhjwlee/yolo-training/main/day2/lift_sample.mp4',
-              2: 'https://raw.githubusercontent.com/jhjwlee/yolo-training/main/day2/lift_sample_02.mp4'}
 
 # ① 현재 폴더 ② 저장 폴더 순서로 찾아 처음 나온 경로 사용 (없으면 None)
 VIDEO_SRC = next((p for p in [Path(VIDEO_NAME), SAVE_DIR / VIDEO_NAME] if p.exists()), None)
-if VIDEO_SRC is None and USE_SAMPLE:  # ③ 예시 영상 내려받기 (wget: 인터넷 파일 받기, -q 로그 줄임)
-    subprocess.run(['wget', '-q', SAMPLE_URL[SAMPLE_NO], '-O', VIDEO_NAME], check=True)
-    VIDEO_SRC = Path(VIDEO_NAME)
-elif VIDEO_SRC is None and IN_COLAB:  # 내 영상 업로드
+if VIDEO_SRC is None and IN_COLAB:  # 두 곳 모두 없을 때만 업로드
     uploaded = files.upload()  # 파일 선택 창 → {파일 이름: 내용}
     if uploaded:  # 창을 취소하면 빈 사전 → 아래 assert에서 안내
         name = next(iter(uploaded))  # 올린 파일의 원래 이름 (.mov도 가능)
         VIDEO_SRC = Path(VIDEO_NAME)
         os.replace(name, VIDEO_SRC)  # 이름을 lift_sample.mp4로 바꿈
 assert VIDEO_SRC is not None and VIDEO_SRC.exists(), \
-    f'{VIDEO_NAME} 파일을 찾지 못했습니다 — USE_SAMPLE = True로 예시 영상을 쓰거나, 셀을 다시 실행해 영상을 고르세요'
+    f'{VIDEO_NAME} 파일을 찾지 못했습니다 — 셀을 다시 실행해 파일 선택 창에서 영상을 고르세요'
 save_out(VIDEO_SRC)  # Drive에도 복사 → 다음 실행 땐 업로드 없이 찾음
 
 # prepare_video: 원본 → 긴 변 1280px 이하·소리 없는 H.264 영상
@@ -229,8 +222,7 @@ show_video(VIDEO, width=360)
 **코드 설명**
 
 - `VIDEO_SRC = next((p for p in [...] if p.exists()), None)` — 현재 폴더, 저장 폴더 순서로 `lift_sample.mp4`를 찾습니다.
-- `USE_SAMPLE`, `SAMPLE_NO`, `SAMPLE_URL` — 두 곳 모두 없고 `USE_SAMPLE = True`면 GitHub의 예시 영상(1번 또는 2번)을 `wget`으로 받아 `lift_sample.mp4`로 저장합니다.
-- `files.upload()` — `USE_SAMPLE = False`이고 두 곳 모두 없으면 파일 선택 창을 띄웁니다. 올린 파일은 `lift_sample.mp4` 이름으로 바뀝니다. 창을 취소하면 `uploaded`가 비어 있어 아래 `assert`에서 안내 문구가 나옵니다.
+- `files.upload()` — 두 곳 모두 없으면 파일 선택 창을 띄웁니다. 올린 파일은 `lift_sample.mp4` 이름으로 바뀝니다. 창을 취소하면 `uploaded`가 비어 있어 아래 `assert`에서 안내 문구가 나옵니다.
 - `save_out(VIDEO_SRC)` — 원본 영상을 저장 폴더에도 복사해 둡니다. 다음 실행 때는 업로드 없이 찾습니다.
 - `prepare_video(src, dst, max_side=1280)` — 긴 변이 1280픽셀을 넘으면 줄이고(`scale`), 소리를 빼고(`-an`), H.264로 저장합니다.
 - `-2` — 가로세로 비율을 지키면서 짝수 크기로 맞추라는 ffmpeg 표기입니다. H.264는 짝수 크기를 요구합니다.
@@ -1107,8 +1099,7 @@ video_s, lifts, stoop_lifts, squat_lifts, high_risk_lifts, avg_risk, stoop_time_
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
-| 셀 5에서 '파일을 찾지 못했습니다' AssertionError가 납니다. | `USE_SAMPLE = False`인데 lift_sample.mp4가 현재 폴더와 저장 폴더 어디에도 없고, 파일 선택 창에서 업로드하지 않았습니다(취소 포함). | `USE_SAMPLE = True`로 예시 영상을 쓰거나, 셀 5를 다시 실행해 파일 선택 창에서 실습 영상을 고르거나, Drive의 MyDrive/yolo_day2 폴더에 lift_sample.mp4를 넣고 다시 실행합니다. |
-| 예시 영상 대신 내 영상을 쓰고 싶은데 계속 예시 영상이 분석됩니다. | 한 번 받은 예시 영상이 현재 폴더와 Drive 저장 폴더에 `lift_sample.mp4`로 남아 있어 그 파일을 먼저 찾습니다. | 두 곳의 `lift_sample.mp4`를 지우거나 이름을 바꾼 뒤 `USE_SAMPLE = False`로 다시 실행합니다. |
+| 셀 5에서 '파일을 찾지 못했습니다' AssertionError가 납니다. | lift_sample.mp4가 현재 폴더와 저장 폴더 어디에도 없고, 파일 선택 창에서 업로드하지 않았습니다(취소 포함). | 셀 5을 다시 실행해 파일 선택 창에서 실습 영상을 고르거나, Drive의 MyDrive/yolo_day2 폴더에 lift_sample.mp4를 넣고 다시 실행합니다. |
 | Step 3 자세 상태가 거의 모두 NOT_STANDING으로 나옵니다. | 정강이 기울기가 60°를 넘는 프레임이 대부분입니다. 엎드리거나 누운 자세의 영상이거나, 다리 관절을 잘못 잡았습니다. | 작업자가 서서 상자를 드는 영상인지 확인합니다. Step 1 그림에서 무릎·발목 위치가 맞는지 보고, 맞지 않으면 다리가 잘 보이게 다시 촬영합니다. |
 | UNKNOWN 프레임이 많고 각도를 구하지 못한 비율이 높습니다. | 어깨·엉덩이·무릎·발목 중 하나라도 신뢰도가 0.3 미만이면 각도를 계산하지 않습니다. 다리가 상자나 화면 밖에 가려졌을 때 생깁니다. | 머리부터 발끝까지 화면에 들어오게 촬영합니다. 영상을 바꿀 수 없다면 body_angles()의 min_conf를 조금 낮춰 비교해 봅니다. |
 | '들기 동작이 없습니다.'가 출력되고 lift_events.csv가 비어 있습니다. | 몸통 기울기가 start_trunk(30°)를 넘는 구간이 없거나, 동작 구간이 0.5초보다 짧아 버려졌습니다. | Step 2 그래프에서 trunk 최댓값을 확인합니다. 정면에서 찍은 영상이면 몸통 기울기가 작게 보이므로 옆에서 다시 찍습니다. |
